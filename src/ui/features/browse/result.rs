@@ -11,6 +11,7 @@ use crate::primitives::atoms::{panel_block_highlight, text_cursor_spans};
 
 use crate::app::model::app_state::AppState;
 use crate::app::model::shared::focused_pane::FocusedPane;
+use crate::app::model::shared::json_format;
 use crate::app::model::shared::low_scroll::{self as low_scroll_layout, LowScrollSettings};
 use crate::app::model::shared::ui_state::{RESULT_INNER_OVERHEAD, ResultSelection, YankFlash};
 use crate::app::model::shared::viewport::{
@@ -227,15 +228,18 @@ impl ResultPane {
         let cached = stored_cache.is_valid(result_generation);
         let fresh_ideal;
         let fresh_min;
-        let (ideal_widths, min_widths) = if cached {
+        let fresh_json;
+        let (ideal_widths, min_widths, json_columns) = if cached {
             (
                 &stored_cache.ideal_widths[..],
                 &stored_cache.header_min_widths[..],
+                &stored_cache.json_columns[..],
             )
         } else {
             fresh_ideal = calculate_ideal_widths(&result.columns, &result.rows);
             fresh_min = calculate_header_min_widths(&result.columns);
-            (&fresh_ideal[..], &fresh_min[..])
+            fresh_json = json_format::detect_json_columns(&result.rows, result.columns.len());
+            (&fresh_ideal[..], &fresh_min[..], &fresh_json[..])
         };
 
         let fingerprint = widths_fingerprint(ideal_widths, min_widths);
@@ -251,8 +255,24 @@ impl ResultPane {
             ColumnWidthsCache::new(
                 ideal_widths.to_vec(),
                 min_widths.to_vec(),
+                json_columns.to_vec(),
                 result_generation,
             )
+        };
+
+        // Build the display rows for Low Scroll Mode. When "Format JSON" is on
+        // and the result has detected JSON columns, those columns are
+        // pretty-printed here so that width sizing, row-height measurement,
+        // and cell rendering all see the same formatted text. Otherwise the
+        // raw rows are used directly (no allocation).
+        let format_json = low_scroll_enabled && low_scroll.format_json;
+        let has_json = format_json && json_columns.iter().any(|&j| j);
+        let formatted_display_rows;
+        let display_rows: &[Vec<String>] = if has_json {
+            formatted_display_rows = format_display_rows(&result.rows, json_columns);
+            &formatted_display_rows
+        } else {
+            &result.rows
         };
 
         // Low Scroll Mode: when enabled and the result would overflow
@@ -265,9 +285,10 @@ impl ResultPane {
         // widest line overall — otherwise multi-line content whose first line
         // is short (e.g. `jsonb_pretty()` output starting with `{`) gets
         // squeezed into a near-zero-width column instead of one sized to fit
-        // its actual content.
+        // its actual content. The formatted `display_rows` are used so JSON
+        // columns are measured at their pretty-printed width.
         let low_scroll_ideal_widths = low_scroll_enabled
-            .then(|| calculate_low_scroll_ideal_widths(&result.columns, &result.rows));
+            .then(|| calculate_low_scroll_ideal_widths(&result.columns, display_rows));
         let low_scroll_widths = low_scroll_ideal_widths.as_deref().unwrap_or(ideal_widths);
 
         // Low Scroll Mode, once toggled on (`L`), always wraps multi-line cell
@@ -285,6 +306,7 @@ impl ResultPane {
                     frame,
                     inner,
                     result,
+                    display_rows,
                     low_scroll_widths,
                     min_widths,
                     horizontal_offset,
@@ -303,6 +325,7 @@ impl ResultPane {
                     frame,
                     inner,
                     result,
+                    display_rows,
                     low_scroll_widths,
                     effective,
                     scroll_offset,
@@ -521,6 +544,7 @@ impl ResultPane {
         frame: &mut Frame,
         inner: Rect,
         result: &QueryResult,
+        rows: &[Vec<String>],
         ideal_widths: &[u16],
         settings: LowScrollSettings,
         scroll_offset: usize,
@@ -538,7 +562,7 @@ impl ResultPane {
     ) {
         let layout = low_scroll_layout::compute_layout(
             &result.columns,
-            &result.rows,
+            rows,
             ideal_widths,
             inner.width,
             &settings,
@@ -610,7 +634,7 @@ impl ResultPane {
                     None
                 };
 
-                let row_data = &result.rows[abs_row_idx];
+                let row_data = &rows[abs_row_idx];
                 let cells: Vec<Cell> = layout
                     .columns
                     .iter()
@@ -721,6 +745,7 @@ impl ResultPane {
         frame: &mut Frame,
         inner: Rect,
         result: &QueryResult,
+        rows: &[Vec<String>],
         ideal_widths: &[u16],
         min_widths: &[u16],
         horizontal_offset: usize,
@@ -744,8 +769,7 @@ impl ResultPane {
         // Per-row line heights for every row (computed against the natural
         // widths every column keeps in this path), handed back to the scroll
         // reducer for line-based visibility math.
-        let row_heights: Vec<u16> = result
-            .rows
+        let row_heights: Vec<u16> = rows
             .iter()
             .map(|row| {
                 low_scroll_layout::row_layout(
@@ -839,7 +863,7 @@ impl ResultPane {
                     None
                 };
 
-                let row_data = &result.rows[abs_row_idx];
+                let row_data = &rows[abs_row_idx];
                 let cells: Vec<Cell> = viewport_indices
                     .iter()
                     .zip(viewport_widths.iter())
@@ -1022,6 +1046,26 @@ pub(crate) fn calculate_ideal_widths(headers: &[String], rows: &[Vec<String>]) -
         .collect()
 }
 
+/// Build a display copy of `rows` with detected JSON columns pretty-printed.
+/// Non-JSON columns are cloned through unchanged. Only call this when there
+/// is at least one JSON column and "Format JSON" is enabled.
+fn format_display_rows(rows: &[Vec<String>], json_columns: &[bool]) -> Vec<Vec<String>> {
+    rows.iter()
+        .map(|row| {
+            row.iter()
+                .enumerate()
+                .map(|(col, cell)| {
+                    if json_columns.get(col).copied().unwrap_or(false) {
+                        json_format::pretty_format_json(cell)
+                    } else {
+                        cell.clone()
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// Like `calculate_ideal_widths`, but sizes each column by the widest *line*
 /// across the whole cell rather than just the first line. Low Scroll Mode
 /// wraps and displays every line, so its width budgeting needs to reflect the
@@ -1066,6 +1110,7 @@ fn effective_low_scroll(settings: LowScrollSettings, enabled: bool) -> LowScroll
         LowScrollSettings {
             allow_horizontal_scroll: true,
             max_lines_per_row: settings.max_lines_per_row,
+            format_json: settings.format_json,
         }
     }
 }

@@ -448,14 +448,24 @@ pub fn calculate_prev_column_offset(current_offset: usize) -> usize {
 pub struct ColumnWidthsCache {
     pub ideal_widths: Vec<u16>,
     pub header_min_widths: Vec<u16>,
+    /// Per-column JSON (object/array) detection, indexed like `ideal_widths`.
+    /// Independent of the "format JSON" toggle, so it can be cached for the
+    /// lifetime of a result and reused as the toggle flips.
+    pub json_columns: Vec<bool>,
     generation: u64,
 }
 
 impl ColumnWidthsCache {
-    pub fn new(ideal_widths: Vec<u16>, header_min_widths: Vec<u16>, generation: u64) -> Self {
+    pub fn new(
+        ideal_widths: Vec<u16>,
+        header_min_widths: Vec<u16>,
+        json_columns: Vec<bool>,
+        generation: u64,
+    ) -> Self {
         Self {
             ideal_widths,
             header_min_widths,
+            json_columns,
             generation,
         }
     }

@@ -42,6 +42,10 @@ pub struct LowScrollSettings {
     /// Caps the number of rendered lines per row. `None` means no cap: a row
     /// grows as tall as its widest wrapped cell needs.
     pub max_lines_per_row: Option<u16>,
+    /// When `true`, columns detected as JSON (object/array values) are
+    /// pretty-printed on display, like PostgreSQL's `jsonb_pretty`. The
+    /// effect is visible wherever cells wrap (Low Scroll Mode).
+    pub format_json: bool,
 }
 
 impl LowScrollSettings {
@@ -536,6 +540,7 @@ mod tests {
             LowScrollSettings {
                 allow_horizontal_scroll: allow_scroll,
                 max_lines_per_row: cap,
+                format_json: false,
             }
         }
 

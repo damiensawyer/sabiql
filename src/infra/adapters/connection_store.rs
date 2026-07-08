@@ -59,6 +59,7 @@ impl TomlConnectionStore {
             config.low_scroll_allow_horizontal_scroll =
                 existing_config.low_scroll_allow_horizontal_scroll;
             config.low_scroll_max_lines_per_row = existing_config.low_scroll_max_lines_per_row;
+            config.low_scroll_format_json = existing_config.low_scroll_format_json;
         }
         let content = toml::to_string_pretty(&config)?;
         let content_with_header = render_config_file(&content);

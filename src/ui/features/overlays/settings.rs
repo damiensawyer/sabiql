@@ -188,6 +188,27 @@ impl SettingsOverlay {
 
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
+            "Format JSON",
+            Style::default().fg(theme.semantic.text.primary),
+        )));
+        lines.push(Line::raw(""));
+        let format_label = if low_scroll.format_json {
+            "on (pretty-print JSON columns)"
+        } else {
+            "off"
+        };
+        let format_style = if low_scroll.format_json {
+            theme.picker_selected_style()
+        } else {
+            Style::default().fg(theme.semantic.text.secondary)
+        };
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(format!("[f] {format_label}"), format_style),
+        ]));
+
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
             "Max lines per row",
             Style::default().fg(theme.semantic.text.primary),
         )));

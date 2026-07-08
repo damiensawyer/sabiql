@@ -779,6 +779,17 @@ pub mod settings {
         }],
     };
 
+    pub const FORMAT_JSON: ModeRow = ModeRow {
+        key_short: "f",
+        key: "f",
+        desc_short: "Format",
+        description: "Toggle JSON pretty-print (Low Scroll)",
+        bindings: &[ExecBinding {
+            action: Action::SettingsToggleLowScrollFormatJson,
+            combos: &[KeyCombo::plain(Key::Char('f'))],
+        }],
+    };
+
     pub const SECTION: ModeRow = ModeRow {
         key_short: "Tab/⇧Tab",
         key: "Tab / Shift+Tab",
@@ -813,6 +824,7 @@ pub const SETTINGS_ROWS: &[ModeRow] = &[
     settings::SELECT,
     settings::EDIT,
     settings::TOGGLE,
+    settings::FORMAT_JSON,
     settings::SECTION,
     settings::CANCEL,
 ];
