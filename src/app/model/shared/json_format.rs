@@ -10,10 +10,8 @@
 
 use std::borrow::Cow;
 
+use serde::Serialize as _;
 use serde_json::Value;
-
-/// One indentation level in the pretty output. Matches `jsonb_pretty`.
-const INDENT: &str = "    ";
 
 /// Maximum number of rows sampled when deciding whether a column is JSON.
 /// Keeps detection cheap on large result sets — a column is either JSON or it
@@ -84,52 +82,16 @@ pub fn detect_json_columns(rows: &[Vec<String>], num_columns: usize) -> Vec<bool
 #[must_use]
 pub fn pretty_format_json(s: &str) -> String {
     let trimmed = s.trim();
-    match serde_json::from_str::<Value>(trimmed) {
-        Ok(value) => render(&value, 0),
-        // Not parseable (e.g. a NULL that slipped through, or malformed text):
-        // leave the cell exactly as the database returned it.
-        Err(_) => s.to_string(),
-    }
-}
-
-/// Render a parsed JSON `value` at `depth` indentation levels.
-///
-/// Objects and arrays expand one element per line (matching `jsonb_pretty`);
-/// scalars use serde_json's compact rendering so quoting/escaping is correct.
-fn render(value: &Value, depth: usize) -> String {
-    match value {
-        Value::Object(map) if !map.is_empty() => {
-            let inner = map
-                .iter()
-                .map(|(key, val)| {
-                    // Serialize the key as a JSON string so it is quoted and
-                    // escaped exactly like serde_json/Postgres would.
-                    let quoted_key = serde_json::to_string(key).unwrap_or_default();
-                    format!(
-                        "{}{}: {}",
-                        INDENT.repeat(depth + 1),
-                        quoted_key,
-                        render(val, depth + 1)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(",\n");
-            format!("{{\n{inner}\n{}}}", INDENT.repeat(depth))
-        }
-        Value::Array(arr) if !arr.is_empty() => {
-            let inner = arr
-                .iter()
-                .map(|val| {
-                    format!("{}{}", INDENT.repeat(depth + 1), render(val, depth + 1))
-                })
-                .collect::<Vec<_>>()
-                .join(",\n");
-            format!("[\n{inner}\n{}]", INDENT.repeat(depth))
-        }
-        // Empty containers, and all scalars: compact JSON (e.g. `{}`, `[]`,
-        // `"text"`, `42`, `true`, `null`).
-        _ => value.to_string(),
-    }
+    let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+        return s.to_string();
+    };
+    let mut buf = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+    let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
+    value
+        .serialize(&mut ser)
+        .expect("serializing an already-parsed Value is infallible");
+    String::from_utf8(buf).expect("serde_json output is always valid UTF-8")
 }
 
 /// Return the display text for a cell, pretty-printing it when the column is
