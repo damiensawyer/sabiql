@@ -269,7 +269,7 @@ impl ResultPane {
         let has_json = format_json && json_columns.iter().any(|&j| j);
         let formatted_display_rows;
         let display_rows: &[Vec<String>] = if has_json {
-            formatted_display_rows = format_display_rows(&result.rows, json_columns);
+            formatted_display_rows = format_display_rows(&result.rows, json_columns, ideal_widths);
             &formatted_display_rows
         } else {
             &result.rows
@@ -1049,14 +1049,22 @@ pub(crate) fn calculate_ideal_widths(headers: &[String], rows: &[Vec<String>]) -
 /// Build a display copy of `rows` with detected JSON columns pretty-printed.
 /// Non-JSON columns are cloned through unchanged. Only call this when there
 /// is at least one JSON column and "Format JSON" is enabled.
-fn format_display_rows(rows: &[Vec<String>], json_columns: &[bool]) -> Vec<Vec<String>> {
+///
+/// `col_widths` are the ideal column widths (in characters, without padding);
+/// JSON that fits compactly within the column width is left on one line.
+fn format_display_rows(
+    rows: &[Vec<String>],
+    json_columns: &[bool],
+    col_widths: &[u16],
+) -> Vec<Vec<String>> {
     rows.iter()
         .map(|row| {
             row.iter()
                 .enumerate()
                 .map(|(col, cell)| {
                     if json_columns.get(col).copied().unwrap_or(false) {
-                        json_format::pretty_format_json(cell)
+                        let max_width = col_widths.get(col).copied().unwrap_or(0) as usize;
+                        json_format::pretty_format_json(cell, max_width)
                     } else {
                         cell.clone()
                     }
@@ -1433,7 +1441,7 @@ mod tests {
         // Cached: is_valid check + clone (actual cache-hit path)
         let ideal = calculate_ideal_widths(&headers, &data);
         let min = calculate_header_min_widths(&headers);
-        let cache = ColumnWidthsCache::new(ideal, min, 1);
+        let cache = ColumnWidthsCache::new(ideal, min, vec![], 1);
         let start = Instant::now();
         for _ in 0..iterations {
             let valid = std::hint::black_box(cache.is_valid(1));

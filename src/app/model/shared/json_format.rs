@@ -77,14 +77,21 @@ pub fn detect_json_columns(rows: &[Vec<String>], num_columns: usize) -> Vec<bool
 
 /// Pretty-print `s` as JSON with `jsonb_pretty`-style 4-space indentation.
 ///
+/// If the compact representation fits within `max_width` characters, the
+/// compact form is returned instead. Pass `0` to always use pretty.
+///
 /// Invalid JSON falls back to the original string unchanged, so a stray
 /// non-JSON value in a detected column is never mangled.
 #[must_use]
-pub fn pretty_format_json(s: &str) -> String {
+pub fn pretty_format_json(s: &str, max_width: usize) -> String {
     let trimmed = s.trim();
     let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
         return s.to_string();
     };
+    let compact = value.to_string();
+    if compact.len() <= max_width {
+        return compact;
+    }
     let mut buf = Vec::new();
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
@@ -100,7 +107,7 @@ pub fn pretty_format_json(s: &str) -> String {
 #[must_use]
 pub fn format_cell(val: &str, is_json_column: bool, format_json: bool) -> Cow<'_, str> {
     if format_json && is_json_column {
-        Cow::Owned(pretty_format_json(val))
+        Cow::Owned(pretty_format_json(val, 0))
     } else {
         Cow::Borrowed(val)
     }
@@ -220,7 +227,7 @@ mod tests {
 
         #[test]
         fn formats_object_like_jsonb_pretty() {
-            let formatted = pretty_format_json(r#"{"f1":1,"f2":[1,2,3]}"#);
+            let formatted = pretty_format_json(r#"{"f1":1,"f2":[1,2,3]}"#, 0);
 
             assert_eq!(
                 formatted,
@@ -230,7 +237,7 @@ mod tests {
 
         #[test]
         fn formats_arrays() {
-            let formatted = pretty_format_json(r#"[1,"two",{"k":"v"}]"#);
+            let formatted = pretty_format_json(r#"[1,"two",{"k":"v"}]"#, 0);
 
             assert_eq!(
                 formatted,
@@ -240,13 +247,13 @@ mod tests {
 
         #[test]
         fn empty_containers_render_compact() {
-            assert_eq!(pretty_format_json("{}"), "{}");
-            assert_eq!(pretty_format_json("[]"), "[]");
+            assert_eq!(pretty_format_json("{}", 0), "{}");
+            assert_eq!(pretty_format_json("[]", 0), "[]");
         }
 
         #[test]
         fn nested_indentation_grows_four_spaces_per_level() {
-            let formatted = pretty_format_json(r#"{"a":{"b":{"c":1}}}"#);
+            let formatted = pretty_format_json(r#"{"a":{"b":{"c":1}}}"#, 0);
 
             assert_eq!(
                 formatted,
@@ -256,21 +263,33 @@ mod tests {
 
         #[test]
         fn escapes_keys_like_serde_json() {
-            let formatted = pretty_format_json(r#"{"a\"b":1}"#);
+            let formatted = pretty_format_json(r#"{"a\"b":1}"#, 0);
 
             assert_eq!(formatted, "{\n    \"a\\\"b\": 1\n}");
         }
 
         #[test]
         fn invalid_json_returns_input_unchanged() {
-            assert_eq!(pretty_format_json("not json"), "not json");
-            assert_eq!(pretty_format_json(""), "");
+            assert_eq!(pretty_format_json("not json", 0), "not json");
+            assert_eq!(pretty_format_json("", 0), "");
         }
 
         #[test]
         fn trims_surrounding_whitespace_before_parsing() {
-            let formatted = pretty_format_json("\n  {\"a\":1}  \n");
+            let formatted = pretty_format_json("\n  {\"a\":1}  \n", 0);
 
+            assert_eq!(formatted, "{\n    \"a\": 1\n}");
+        }
+
+        #[test]
+        fn stays_compact_when_fits_within_max_width() {
+            let json = r#"{"a":1,"b":2}"#;
+            assert_eq!(pretty_format_json(json, json.len()), r#"{"a":1,"b":2}"#);
+        }
+
+        #[test]
+        fn expands_when_compact_exceeds_max_width() {
+            let formatted = pretty_format_json(r#"{"a":1}"#, 5);
             assert_eq!(formatted, "{\n    \"a\": 1\n}");
         }
 
@@ -280,7 +299,7 @@ mod tests {
         #[case("true", "true")]
         #[case("null", "null")]
         fn scalars_render_compact(#[case] input: &str, #[case] expected: &str) {
-            assert_eq!(pretty_format_json(input), expected);
+            assert_eq!(pretty_format_json(input, 0), expected);
         }
     }
 
