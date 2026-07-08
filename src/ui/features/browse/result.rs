@@ -659,6 +659,7 @@ impl ResultPane {
                                     val,
                                     col.width,
                                     settings.max_lines_per_row,
+                                    line_budget,
                                     cell_vertical_offset,
                                 );
                                 corrected_cell_vertical_offset = clamped;
@@ -899,6 +900,7 @@ impl ResultPane {
                                     val,
                                     col_width,
                                     settings.max_lines_per_row,
+                                    line_budget,
                                     cell_vertical_offset,
                                 );
                                 corrected_cell_vertical_offset = clamped;
@@ -1120,18 +1122,27 @@ fn effective_low_scroll(settings: LowScrollSettings, enabled: bool) -> LowScroll
 
 /// The number of additional wrapped lines available below `cell_vertical_offset`
 /// for the active cell, clamped to what the cell's content actually has (0 when
-/// the cap doesn't truncate it, since there is nothing to scroll into).
+/// the visible window already shows all content).
+///
+/// When `max_lines_per_row` is `None` the pane height (`line_budget`) is used
+/// as the effective window size so that content overflowing the screen can still
+/// be scrolled into.
 fn clamp_cell_vertical_offset(
     text: &str,
     col_width: u16,
     max_lines_per_row: Option<u16>,
+    line_budget: usize,
     offset: usize,
 ) -> usize {
-    let Some(cap) = max_lines_per_row else {
-        return 0;
+    let cap = match max_lines_per_row {
+        Some(c) => c as usize,
+        None => line_budget,
     };
+    if cap == 0 {
+        return 0;
+    }
     let total = LowScrollSettings::wrapped_cell_lines(text, col_width, PADDING) as usize;
-    offset.min(total.saturating_sub(cap as usize))
+    offset.min(total.saturating_sub(cap))
 }
 
 /// Wrap a cell's text into ratatui lines for Low Scroll Mode, applying the
@@ -1481,15 +1492,24 @@ mod tests {
         }
 
         #[test]
-        fn clamp_offset_is_zero_when_no_cap() {
-            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd", 10, None, 5);
+        fn clamp_offset_is_zero_when_no_cap_and_fits_in_budget() {
+            // 4 lines, line_budget=10 -> no overflow, offset clamped to 0
+            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd", 10, None, 10, 5);
 
             assert_eq!(clamped, 0);
         }
 
         #[test]
+        fn clamp_offset_uses_line_budget_when_no_cap() {
+            // 4 lines, line_budget=2 -> 2 lines of overflow; offset=5 clamped to 2
+            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd", 10, None, 2, 5);
+
+            assert_eq!(clamped, 2);
+        }
+
+        #[test]
         fn clamp_offset_is_zero_when_cell_not_truncated() {
-            let clamped = clamp_cell_vertical_offset("a\nb", 10, Some(5), 5);
+            let clamped = clamp_cell_vertical_offset("a\nb", 10, Some(5), 20, 5);
 
             assert_eq!(clamped, 0);
         }
@@ -1497,14 +1517,14 @@ mod tests {
         #[test]
         fn clamp_offset_caps_at_overflow_amount() {
             // 5 wrapped lines, cap 2 -> 3 lines of overflow to scroll into.
-            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd\ne", 10, Some(2), 100);
+            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd\ne", 10, Some(2), 20, 100);
 
             assert_eq!(clamped, 3);
         }
 
         #[test]
         fn clamp_offset_passes_through_when_within_range() {
-            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd\ne", 10, Some(2), 1);
+            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd\ne", 10, Some(2), 20, 1);
 
             assert_eq!(clamped, 1);
         }
