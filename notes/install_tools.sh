@@ -28,7 +28,9 @@ if [ "${#to_install[@]}" -eq 0 ]; then
 fi
 
 echo "==> Installing: ${to_install[*]}"
-cargo install "${to_install[@]}"
+# cargo-nextest refuses to build without --locked (its build is pinned to its
+# own dep versions); --locked is harmless for the others too.
+cargo install --locked "${to_install[@]}"
 
 echo "==> Done. Versions:"
 for tool in "${tools[@]}"; do
