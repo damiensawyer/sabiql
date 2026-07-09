@@ -5,7 +5,8 @@ use crate::domain::{QueryResult, QuerySource};
 use crate::model::browse::result_history::ResultHistory;
 use crate::model::shared::async_run::AsyncRun;
 
-pub const PREVIEW_PAGE_SIZE: usize = 500;
+/// Default page size when no per-table setting is available
+pub const DEFAULT_PAGE_SIZE: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VisibleResultKind {
@@ -32,13 +33,13 @@ pub struct PaginationState {
 
 impl PaginationState {
     pub fn offset(&self) -> usize {
-        self.current_page * PREVIEW_PAGE_SIZE
+        self.current_page * DEFAULT_PAGE_SIZE
     }
 
     pub fn total_pages_estimate(&self) -> Option<usize> {
         self.total_rows_estimate.map(|total| {
             let total = total.max(0) as usize;
-            total.div_ceil(PREVIEW_PAGE_SIZE).max(1)
+            total.div_ceil(DEFAULT_PAGE_SIZE).max(1)
         })
     }
 
@@ -434,7 +435,7 @@ mod tests {
                 ..Default::default()
             };
 
-            assert_eq!(p.offset(), 3 * PREVIEW_PAGE_SIZE);
+            assert_eq!(p.offset(), 3 * DEFAULT_PAGE_SIZE);
         }
 
         #[test]

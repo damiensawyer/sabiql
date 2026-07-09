@@ -8,6 +8,8 @@ pub struct AppSettings {
     pub theme_id: ThemeId,
     pub keymap_preset: KeymapPreset,
     pub er_browser: Option<String>,
+    pub default_row_count: u32,
+    pub paged_mode: bool,
 }
 
 impl Default for AppSettings {
@@ -16,6 +18,8 @@ impl Default for AppSettings {
             theme_id: ThemeId::Default,
             keymap_preset: KeymapPreset::Default,
             er_browser: None,
+            default_row_count: 500,
+            paged_mode: false,
         }
     }
 }

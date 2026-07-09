@@ -1,6 +1,6 @@
 ---
 source: src/tests/render_snapshots/overlays.rs
-assertion_line: 503
+assertion_line: 517
 expression: output
 ---
 test_project | test_db | - | no dsn | localhost:5432/test                                                                                                            
@@ -21,7 +21,7 @@ test_project | test_db | - | no dsn | localhost:5432/test
 │                                │    Appearance    │ER Diagram                                                                    │                                │
 │                                │    Keymap        │                                                                              │                                │
 │                                │  > ER Diagram    │Browser                                                                       │                                │
-│                                │                  │                                                                              │                                │
+│                                │    Default Row Co│                                                                              │                                │
 │                                │                  │    System default                                                            │                                │
 │                                │                  │    Google Chrome                                                             │                                │
 │                                │                  │    Firefox                                                                   │                                │

@@ -20,6 +20,10 @@ pub struct ConnectionConfigFile {
     pub keymap_preset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub er_browser: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_row_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paged_mode: Option<bool>,
     pub connections: Vec<ConnectionConfigEntry>,
 }
 
@@ -44,6 +48,8 @@ impl From<&[ConnectionProfile]> for ConnectionConfigFile {
             theme: None,
             keymap_preset: None,
             er_browser: None,
+            default_row_count: None,
+            paged_mode: None,
             connections: profiles
                 .iter()
                 .map(|p| ConnectionConfigEntry {

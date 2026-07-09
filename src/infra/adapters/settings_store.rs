@@ -88,6 +88,8 @@ impl SettingsStore for TomlSettingsStore {
                 theme: None,
                 keymap_preset: None,
                 er_browser: None,
+                default_row_count: None,
+                paged_mode: None,
                 connections: vec![],
             });
         set_app_settings(&mut config, settings);
@@ -116,6 +118,8 @@ fn app_settings(config: ConnectionConfigFile) -> AppSettings {
             .and_then(KeymapPreset::from_config_value)
             .unwrap_or(KeymapPreset::Default),
         er_browser: config.er_browser,
+        default_row_count: 500,
+        paged_mode: false,
     }
 }
 
@@ -123,6 +127,8 @@ fn set_app_settings(config: &mut ConnectionConfigFile, settings: AppSettings) {
     config.theme = Some(settings.theme_id.config_value().to_string());
     config.keymap_preset = Some(settings.keymap_preset.config_value().to_string());
     config.er_browser = settings.er_browser;
+    config.default_row_count = Some(settings.default_row_count);
+    config.paged_mode = Some(settings.paged_mode);
 }
 
 #[cfg(test)]

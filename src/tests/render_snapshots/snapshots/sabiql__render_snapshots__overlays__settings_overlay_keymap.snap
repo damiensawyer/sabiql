@@ -1,5 +1,6 @@
 ---
 source: src/tests/render_snapshots/overlays.rs
+assertion_line: 484
 expression: output
 ---
 test_project | test_db | - | no dsn | localhost:5432/test                                                                                                            
@@ -20,7 +21,7 @@ test_project | test_db | - | no dsn | localhost:5432/test
 │                                │    Appearance    │Keymap                                                                        │                                │
 │                                │  > Keymap        │                                                                              │                                │
 │                                │    ER Diagram    │Keymap preset                                                                 │                                │
-│                                │                  │                                                                              │                                │
+│                                │    Default Row Co│                                                                              │                                │
 │                                │                  │  > Default        saved                                                      │                                │
 │                                │                  │    IDE                                                                       │                                │
 │                                │                  │                                                                              │                                │

@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use crate::cmd::effect::Effect;
 use crate::domain::{QueryResult, QuerySource};
 use crate::model::app_state::AppState;
-use crate::model::browse::query_execution::{PREVIEW_PAGE_SIZE, PostDeleteRowSelection};
+use crate::model::browse::query_execution::{DEFAULT_PAGE_SIZE, PostDeleteRowSelection};
 use crate::model::shared::help::HelpOrigin;
 use crate::model::shared::input_mode::InputMode;
 use crate::model::sql_editor::modal::AdhocSuccessSnapshot;
@@ -41,8 +41,9 @@ fn try_adhoc_refresh(state: &mut AppState, result: &QueryResult, now: Instant) -
     } else if !state.query.pagination.table.is_empty() {
         let page = state.query.pagination.current_page;
         let generation = state.session.selection_generation();
+        let page_size = state.settings.selected_default_row_count() as usize;
         effects.extend(preview_effect_for_current_table(
-            state, now, page, generation,
+            state, now, page, generation, page_size,
         ));
     }
 
@@ -101,16 +102,49 @@ pub fn reduce_execution(
                 // Result pane like any other preview.
                 (QuerySource::Preview, _) => {
                     let preserved_result_col = state.result_interaction.selection().cell();
-                    let preserved_horizontal_offset = state.result_interaction.horizontal_offset;
                     reset_view_for_new_result(state, now);
 
                     if let Some(page) = target_page {
                         state.query.pagination.current_page = *page;
-                        if result.rows.len() < PREVIEW_PAGE_SIZE {
+                        if result.rows.len() < DEFAULT_PAGE_SIZE {
                             state.query.pagination.reached_end = true;
                         }
                     }
-                    state.query.set_current_result(Arc::clone(result));
+                    
+                    // When paginating, extend the existing rows instead of replacing them
+                    // This allows accumulating rows across pages: 500, 1000, 1500, etc.
+                    let current_result = state.query.current_result();
+                    // Remember cursor position before pagination for restoration
+                    let preserved_scroll_offset = state.result_interaction.scroll_offset;
+                    let preserved_horizontal_offset = state.result_interaction.horizontal_offset;
+                    let preserved_row = state.result_interaction.selection().row();
+                    
+                    // Clone the result we're about to set, so we can use it after setting
+                    let result_to_set = if let Some(existing) = current_result {
+                        // Combine existing rows with new ones
+                        let existing_rows = existing.rows.clone();
+                        let new_rows = result.rows.clone();
+                        let combined_rows: Vec<Vec<String>> = existing_rows.into_iter().chain(new_rows).collect();
+                        let mut new_result = Arc::unwrap_or_clone(existing.clone());
+                        new_result.row_count = combined_rows.len();
+                        new_result.rows = combined_rows;
+                        Arc::new(new_result)
+                    } else {
+                        Arc::clone(result)
+                    };
+                    state.query.set_current_result(result_to_set.clone());
+
+                    // Restore cursor position if this was a pagination
+                    if result.source == QuerySource::Preview {
+                        // Restore scroll offset, but keep it relative to the new total
+                        state.result_interaction.scroll_offset = preserved_scroll_offset;
+                        state.result_interaction.horizontal_offset = preserved_horizontal_offset;
+                        // Restore row selection if it was valid (within old data)
+                        if let Some(row) = preserved_row {
+                            let max_row = result_to_set.row_count.saturating_sub(1);
+                            state.result_interaction.move_row(row.min(max_row));
+                        }
+                    }
 
                     match state.query.post_delete_row_selection() {
                         PostDeleteRowSelection::Keep => {}
@@ -260,7 +294,8 @@ pub fn reduce_execution(
             // Keep the generation captured at selection time, not the current
             // one: the selection may have been cleared between dispatch and
             // now, and such a completion must fail the stale check.
-            match preview_effect_for_current_table(state, now, 0, *generation) {
+            let page_size = state.settings.selected_default_row_count() as usize;
+            match preview_effect_for_current_table(state, now, 0, *generation, page_size) {
                 Some(effect) => DispatchResult::handled_with(vec![effect]),
                 None => DispatchResult::handled(),
             }
@@ -484,7 +519,7 @@ mod tests {
         fn does_not_set_reached_end_for_full_page() {
             let mut state = create_test_state();
             state.session.set_selection_generation(1);
-            let result = preview_result(PREVIEW_PAGE_SIZE);
+            let result = preview_result(DEFAULT_PAGE_SIZE);
             let now = Instant::now();
             let action = query_completed_action(&mut state, result, 1, Some(0));
 

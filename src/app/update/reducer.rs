@@ -2596,7 +2596,7 @@ mod tests {
     mod pagination_integration {
         use super::*;
         use crate::domain::{DatabaseMetadata, QueryResult, QuerySource, TableSummary};
-        use crate::model::browse::query_execution::PREVIEW_PAGE_SIZE;
+        use crate::model::browse::query_execution::DEFAULT_PAGE_SIZE;
         use std::sync::Arc;
 
         fn state_after_confirm_and_complete() -> (AppState, Instant) {
@@ -2656,7 +2656,7 @@ mod tests {
             let result = Arc::new(QueryResult::success(
                 String::new(),
                 vec!["id".to_string()],
-                vec![vec!["1".to_string()]; PREVIEW_PAGE_SIZE],
+                vec![vec!["1".to_string()]; DEFAULT_PAGE_SIZE],
                 10,
                 QuerySource::Preview,
             ));

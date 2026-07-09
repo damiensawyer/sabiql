@@ -285,7 +285,8 @@ pub fn reduce_write(
 
                     let page = state.query.pagination.current_page;
                     let generation = state.session.selection_generation();
-                    match preview_effect_for_current_table(state, now, page, generation) {
+                    let page_size = state.settings.selected_default_row_count() as usize;
+                    match preview_effect_for_current_table(state, now, page, generation, page_size) {
                         Some(effect) => DispatchResult::handled_with(vec![effect]),
                         None => DispatchResult::handled(),
                     }
@@ -332,7 +333,8 @@ pub fn reduce_write(
                     ));
 
                     let generation = state.session.selection_generation();
-                    match preview_effect_for_current_table(state, now, target_page, generation) {
+                    let page_size = state.settings.selected_default_row_count() as usize;
+                    match preview_effect_for_current_table(state, now, target_page, generation, page_size) {
                         Some(effect) => {
                             state.query.pagination.reached_end = false;
                             DispatchResult::handled_with(vec![effect])

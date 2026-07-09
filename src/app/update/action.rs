@@ -338,6 +338,9 @@ pub enum Action {
     // Settings
     SettingsSelectNext,
     SettingsSelectPrevious,
+    SettingsSelectRow,
+    SettingsDeselectRow,
+    SettingsSelectAllRows,
     SettingsNextSection,
     SettingsPreviousSection,
     SettingsStartCustomBrowserEdit,
@@ -346,6 +349,7 @@ pub enum Action {
     SettingsCancel,
     SettingsSaved(AppSettings),
     SettingsSaveFailed(SettingsStoreError),
+    SettingsTogglePagedMode,
 
     // Database structure
     LoadMetadata,

@@ -795,6 +795,17 @@ pub mod settings {
             combos: &[KeyCombo::plain(Key::Esc)],
         }],
     };
+
+    pub const PAGED_MODE_TOGGLE: ModeRow = ModeRow {
+        key_short: "x",
+        key: "x",
+        desc_short: "Toggle paged mode",
+        description: "Toggle paged mode",
+        bindings: &[ExecBinding {
+            action: Action::SettingsTogglePagedMode,
+            combos: &[KeyCombo::plain(Key::Char('x'))],
+        }],
+    };
 }
 
 pub const SETTINGS_ROWS: &[ModeRow] = &[
@@ -803,6 +814,7 @@ pub const SETTINGS_ROWS: &[ModeRow] = &[
     settings::EDIT,
     settings::SECTION,
     settings::CANCEL,
+    settings::PAGED_MODE_TOGGLE,
 ];
 
 // =============================================================================

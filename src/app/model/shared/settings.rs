@@ -7,16 +7,18 @@ pub enum SettingsSection {
     Appearance,
     Keymap,
     ErDiagram,
+    DefaultRowCount,
 }
 
 impl SettingsSection {
-    pub const ALL: [Self; 3] = [Self::Appearance, Self::Keymap, Self::ErDiagram];
+    pub const ALL: [Self; 4] = [Self::Appearance, Self::Keymap, Self::ErDiagram, Self::DefaultRowCount];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
             Self::Keymap => "Keymap",
             Self::ErDiagram => "ER Diagram",
+            Self::DefaultRowCount => "Default Row Count",
         }
     }
 
@@ -183,6 +185,9 @@ pub struct SettingsState {
     selected_er_browser_choice: ErBrowserChoice,
     custom_er_browser: TextInputState,
     editing_custom_er_browser: bool,
+    saved_default_row_count: u32,
+    selected_default_row_count: u32,
+    is_paged_mode: bool,
     section: SettingsSection,
 }
 
@@ -197,6 +202,9 @@ impl Default for SettingsState {
             selected_er_browser_choice: ErBrowserChoice::SystemDefault,
             custom_er_browser: TextInputState::default(),
             editing_custom_er_browser: false,
+            saved_default_row_count: 500,
+            selected_default_row_count: 500,
+            is_paged_mode: false,
             section: SettingsSection::Appearance,
         }
     }
@@ -226,6 +234,20 @@ impl SettingsState {
         self.section = SettingsSection::Appearance;
     }
 
+    pub fn open_with_settings(&mut self, current_theme: ThemeId, settings: &crate::ports::outbound::AppSettings) {
+        self.previous_theme = current_theme;
+        self.selected_theme = current_theme;
+        self.selected_keymap_preset = settings.keymap_preset;
+        self.selected_er_browser_choice =
+            ErBrowserChoice::from_browser_name(settings.er_browser.as_deref());
+        self.custom_er_browser = custom_input_for(settings.er_browser.as_deref());
+        self.editing_custom_er_browser = false;
+        self.saved_default_row_count = settings.default_row_count;
+        self.selected_default_row_count = settings.default_row_count;
+        self.is_paged_mode = settings.paged_mode;
+        self.section = SettingsSection::Appearance;
+    }
+
     pub fn previous_theme(&self) -> ThemeId {
         self.previous_theme
     }
@@ -244,6 +266,43 @@ impl SettingsState {
 
     pub fn section(&self) -> SettingsSection {
         self.section
+    }
+
+    pub fn saved_default_row_count(&self) -> u32 {
+        self.saved_default_row_count
+    }
+
+    pub fn selected_default_row_count(&self) -> u32 {
+        self.selected_default_row_count
+    }
+
+    pub fn is_paged_mode(&self) -> bool {
+        self.is_paged_mode
+    }
+
+    pub fn default_row_count(&self) -> u32 {
+        self.selected_default_row_count
+    }
+
+    pub fn paged_mode(&self) -> bool {
+        self.is_paged_mode
+    }
+
+    pub fn set_default_row_count(&mut self, count: u32) {
+        self.selected_default_row_count = count;
+        self.saved_default_row_count = count;
+    }
+
+    pub fn increment_row_count(&mut self) {
+        self.selected_default_row_count = (self.selected_default_row_count + 100).max(100);
+    }
+
+    pub fn decrement_row_count(&mut self) {
+        self.selected_default_row_count = (self.selected_default_row_count - 100).max(100);
+    }
+
+    pub fn set_paged_mode(&mut self, enabled: bool) {
+        self.is_paged_mode = enabled;
     }
 
     pub fn saved_er_browser(&self) -> Option<&str> {
@@ -296,6 +355,9 @@ impl SettingsState {
                 self.editing_custom_er_browser = false;
                 self.selected_er_browser_choice = self.selected_er_browser_choice.next();
             }
+            SettingsSection::DefaultRowCount => {
+                self.selected_default_row_count = (self.selected_default_row_count + 100).max(100);
+            }
         }
     }
 
@@ -310,6 +372,9 @@ impl SettingsState {
             SettingsSection::ErDiagram => {
                 self.editing_custom_er_browser = false;
                 self.selected_er_browser_choice = self.selected_er_browser_choice.previous();
+            }
+            SettingsSection::DefaultRowCount => {
+                self.selected_default_row_count = (self.selected_default_row_count - 100).max(100);
             }
         }
     }
@@ -354,6 +419,8 @@ impl SettingsState {
         theme: ThemeId,
         keymap_preset: KeymapPreset,
         er_browser: Option<String>,
+        default_row_count: u32,
+        paged_mode: bool,
     ) {
         self.previous_theme = theme;
         self.selected_theme = theme;
@@ -364,6 +431,9 @@ impl SettingsState {
             ErBrowserChoice::from_browser_name(self.saved_er_browser.as_deref());
         self.custom_er_browser = custom_input_for(self.saved_er_browser.as_deref());
         self.editing_custom_er_browser = false;
+        self.saved_default_row_count = default_row_count;
+        self.selected_default_row_count = default_row_count;
+        self.is_paged_mode = paged_mode;
     }
 
     pub fn discard_selection(&mut self) {
@@ -373,6 +443,8 @@ impl SettingsState {
             ErBrowserChoice::from_browser_name(self.saved_er_browser.as_deref());
         self.custom_er_browser = custom_input_for(self.saved_er_browser.as_deref());
         self.editing_custom_er_browser = false;
+        self.selected_default_row_count = self.saved_default_row_count;
+        self.is_paged_mode = false;
     }
 }
 

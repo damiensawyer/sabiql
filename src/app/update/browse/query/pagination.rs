@@ -179,8 +179,10 @@ pub fn reduce_pagination(
             }
             let next_page = state.query.pagination.current_page + 1;
             let generation = state.session.selection_generation();
-            match preview_effect_for_current_table(state, now, next_page, generation) {
+            let page_size = state.settings.selected_default_row_count() as usize;
+            match preview_effect_for_current_table(state, now, next_page, generation, page_size) {
                 Some(effect) => {
+                    // Remember cursor position before pagination (restored in execution.rs)
                     state.result_interaction.reset_view();
                     DispatchResult::handled_with(vec![effect])
                 }
@@ -197,8 +199,10 @@ pub fn reduce_pagination(
             }
             let prev_page = state.query.pagination.current_page - 1;
             let generation = state.session.selection_generation();
-            match preview_effect_for_current_table(state, now, prev_page, generation) {
+            let page_size = state.settings.selected_default_row_count() as usize;
+            match preview_effect_for_current_table(state, now, prev_page, generation, page_size) {
                 Some(effect) => {
+                    // Remember cursor position before pagination (restored in execution.rs)
                     state.result_interaction.reset_view();
                     state.query.pagination.reached_end = false;
                     DispatchResult::handled_with(vec![effect])
@@ -218,7 +222,7 @@ mod tests {
     use crate::ports::outbound::DbOperationError;
     use std::sync::Arc;
 
-    use crate::model::browse::query_execution::{PREVIEW_PAGE_SIZE, PaginationState};
+    use crate::model::browse::query_execution::{DEFAULT_PAGE_SIZE, PaginationState};
     use crate::update::browse::query::dispatch_query;
     use crate::update::browse::query::tests::*;
 
@@ -278,7 +282,7 @@ mod tests {
             let mut state = create_test_state();
             state
                 .query
-                .set_current_result(preview_result(PREVIEW_PAGE_SIZE));
+                .set_current_result(preview_result(DEFAULT_PAGE_SIZE));
             state.query.pagination = PaginationState {
                 current_page: 0,
                 total_rows_estimate: Some(1500),
@@ -350,7 +354,7 @@ mod tests {
             let mut state = create_test_state();
             state
                 .query
-                .set_current_result(preview_result(PREVIEW_PAGE_SIZE));
+                .set_current_result(preview_result(DEFAULT_PAGE_SIZE));
             let _ = state.query.begin_running(Instant::now());
             let now = Instant::now();
 
@@ -392,7 +396,7 @@ mod tests {
             let mut state = create_test_state();
             state
                 .query
-                .set_current_result(preview_result(PREVIEW_PAGE_SIZE));
+                .set_current_result(preview_result(DEFAULT_PAGE_SIZE));
             state.query.pagination = PaginationState {
                 current_page: 0,
                 total_rows_estimate: Some(1500),
@@ -424,7 +428,7 @@ mod tests {
             let mut state = create_test_state();
             state
                 .query
-                .set_current_result(preview_result(PREVIEW_PAGE_SIZE));
+                .set_current_result(preview_result(DEFAULT_PAGE_SIZE));
             state.query.pagination = PaginationState {
                 current_page: 2,
                 total_rows_estimate: Some(1500),
@@ -461,7 +465,7 @@ mod tests {
             let mut state = create_test_state();
             state
                 .query
-                .set_current_result(preview_result(PREVIEW_PAGE_SIZE));
+                .set_current_result(preview_result(DEFAULT_PAGE_SIZE));
             state.query.pagination.current_page = 0;
             let now = Instant::now();
 
@@ -481,7 +485,7 @@ mod tests {
             let mut state = create_test_state();
             state
                 .query
-                .set_current_result(preview_result_with_two_columns(PREVIEW_PAGE_SIZE));
+                .set_current_result(preview_result_with_two_columns(DEFAULT_PAGE_SIZE));
             state.query.pagination.current_page = 0;
             state.result_interaction.activate_cell(1, 1);
             state.result_interaction.stage_row(1);

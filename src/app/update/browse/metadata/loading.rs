@@ -49,8 +49,9 @@ pub(super) fn reduce_loading(
                     // data/schema even though the table still exists.
                     let page = state.query.pagination.current_page;
                     let generation = state.session.selection_generation();
+                    let page_size = state.settings.selected_default_row_count() as usize;
                     effects.extend(preview_effect_for_current_table(
-                        state, now, page, generation,
+                        state, now, page, generation, page_size,
                     ));
                     let detail_run_id = state.session.begin_table_detail_run();
                     effects.push(Effect::FetchTableDetail {

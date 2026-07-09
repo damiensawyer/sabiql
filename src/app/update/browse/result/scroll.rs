@@ -5,6 +5,7 @@ use crate::update::action::{
     Action, CursorPosition, ScrollAmount, ScrollDirection, ScrollTarget, ScrollToCursorTarget,
 };
 use crate::update::dispatch_result::DispatchResult;
+use crate::update::browse::query::preview_effect_for_current_table;
 
 pub(super) fn result_row_count(state: &AppState) -> usize {
     state.query.visible_result().map_or(0, |r| r.rows.len())
@@ -17,6 +18,47 @@ pub(super) fn result_col_count(state: &AppState) -> usize {
 pub(super) fn result_max_scroll(state: &AppState) -> usize {
     let visible = state.result_visible_rows();
     result_row_count(state).saturating_sub(visible)
+}
+
+/// Check if we're at the end of the visible results and can paginate further
+pub(super) fn can_paginate_at_end(state: &AppState) -> bool {
+    if let Some(result) = state.query.visible_result() {
+        if !state.query.can_paginate_visible_result() {
+            return false;
+        }
+        let current_row_count = result.rows.len();
+        if current_row_count == 0 {
+            return false;
+        }
+        let max_scroll = result_max_scroll(state);
+        // We're at the bottom if scroll_offset equals max_scroll
+        if state.result_interaction.scroll_offset != max_scroll {
+            return false;
+        }
+        // There are more pages if pagination can continue
+        state.query.pagination.can_next()
+    } else {
+        false
+    }
+}
+
+/// Trigger automatic pagination when at the end of results
+/// Returns Some(effects) if pagination is triggered, None otherwise
+pub(super) fn trigger_automatic_pagination(state: &mut AppState) -> Option<Vec<crate::cmd::effect::Effect>> {
+    if can_paginate_at_end(state) {
+        let next_page = state.query.pagination.current_page + 1;
+        let generation = state.session.selection_generation();
+        let page_size = state.settings.selected_default_row_count() as usize;
+        match preview_effect_for_current_table(state, std::time::Instant::now(), next_page, generation, page_size) {
+            Some(effect) => {
+                state.result_interaction.reset_view();
+                Some(vec![effect])
+            }
+            None => None,
+        }
+    } else {
+        None
+    }
 }
 
 fn ensure_row_visible(state: &mut AppState) {
@@ -104,6 +146,10 @@ pub fn reduce_scroll(state: &mut AppState, action: &Action) -> DispatchResult {
                     s.result_interaction.scroll_offset += 1;
                 }
             });
+            // Trigger pagination if we're now at the bottom and can paginate further
+            if let Some(effects) = trigger_automatic_pagination(state) {
+                return DispatchResult::handled_with(effects);
+            }
             DispatchResult::handled()
         }
         Action::Scroll {
@@ -124,6 +170,10 @@ pub fn reduce_scroll(state: &mut AppState, action: &Action) -> DispatchResult {
             move_row_or_scroll(state, max_row, |s| {
                 s.result_interaction.scroll_offset = max_scroll;
             });
+            // Automatically load next page if at end and can paginate
+            if let Some(effects) = trigger_automatic_pagination(state) {
+                return DispatchResult::handled_with(effects);
+            }
             DispatchResult::handled()
         }
         Action::Scroll {
@@ -178,6 +228,12 @@ pub fn reduce_scroll(state: &mut AppState, action: &Action) -> DispatchResult {
             let delta = page_scroll_delta(state, *amount).unwrap_or(0);
             if delta > 0 {
                 move_result_row_and_scroll(state, *direction, delta);
+            }
+            // Trigger pagination if scrolling down and we're at the bottom
+            if *direction == ScrollDirection::Down {
+                if let Some(effects) = trigger_automatic_pagination(state) {
+                    return DispatchResult::handled_with(effects);
+                }
             }
             DispatchResult::handled()
         }
@@ -257,6 +313,7 @@ mod tests {
 
     use super::*;
     use crate::domain::{QueryResult, QuerySource};
+    use crate::model::browse::query_execution::PaginationState;
     use crate::model::shared::key_sequence::Prefix;
 
     fn state_with_result_rows(rows: usize, pane_height: u16) -> AppState {
@@ -769,4 +826,243 @@ mod tests {
             assert_eq!(state.ui.key_sequence, KeySequenceState::Idle);
         }
     }
+
+    mod automatic_pagination {
+        use super::*;
+
+        #[test]
+        fn end_of_scroll_triggers_next_page() {
+            let mut state = state_with_result_rows(100, 25);
+            // visible=20, max_scroll=80, scrolled to bottom
+            state.result_interaction.scroll_offset = 80;
+            // Set up pagination state with more pages available
+            state.query.pagination = PaginationState {
+                current_page: 0,
+                total_rows_estimate: Some(1500),
+                reached_end: false,
+                schema: "public".to_string(),
+                table: "users".to_string(),
+            };
+
+            // Scroll to end
+            reduce_scroll(
+                &mut state,
+                &Action::Scroll {
+                    target: ScrollTarget::Result,
+                    direction: ScrollDirection::Down,
+                    amount: ScrollAmount::ToEnd,
+                },
+            );
+
+            // Should have triggered pagination
+            assert_eq!(state.query.pagination.current_page, 1);
+        }
+
+        #[test]
+        fn line_scroll_at_bottom_triggers_next_page() {
+            let mut state = state_with_result_rows(100, 25);
+            // visible=20, max_scroll=80, scrolled to bottom
+            state.result_interaction.scroll_offset = 80;
+            // Set up pagination state with more pages available
+            state.query.pagination = PaginationState {
+                current_page: 0,
+                total_rows_estimate: Some(1500),
+                reached_end: false,
+                schema: "public".to_string(),
+                table: "users".to_string(),
+            };
+
+            // Scroll down one line (should trigger pagination)
+            reduce_scroll(
+                &mut state,
+                &Action::Scroll {
+                    target: ScrollTarget::Result,
+                    direction: ScrollDirection::Down,
+                    amount: ScrollAmount::Line,
+                },
+            );
+
+            // Should have triggered pagination
+            assert_eq!(state.query.pagination.current_page, 1);
+        }
+
+        #[test]
+        fn half_page_scroll_at_bottom_triggers_next_page() {
+            let mut state = state_with_result_rows(100, 25);
+            // visible=20, max_scroll=80, scrolled to bottom
+            state.result_interaction.scroll_offset = 80;
+            // Set up pagination state with more pages available
+            state.query.pagination = PaginationState {
+                current_page: 0,
+                total_rows_estimate: Some(1500),
+                reached_end: false,
+                schema: "public".to_string(),
+                table: "users".to_string(),
+            };
+
+            // Scroll down half page (should trigger pagination)
+            reduce_scroll(
+                &mut state,
+                &Action::Scroll {
+                    target: ScrollTarget::Result,
+                    direction: ScrollDirection::Down,
+                    amount: ScrollAmount::HalfPage,
+                },
+            );
+
+            // Should have triggered pagination
+            assert_eq!(state.query.pagination.current_page, 1);
+        }
+
+        #[test]
+        fn full_page_scroll_at_bottom_triggers_next_page() {
+            let mut state = state_with_result_rows(100, 25);
+            // visible=20, max_scroll=80, scrolled to bottom
+            state.result_interaction.scroll_offset = 80;
+            // Set up pagination state with more pages available
+            state.query.pagination = PaginationState {
+                current_page: 0,
+                total_rows_estimate: Some(1500),
+                reached_end: false,
+                schema: "public".to_string(),
+                table: "users".to_string(),
+            };
+
+            // Scroll down full page (should trigger pagination)
+            reduce_scroll(
+                &mut state,
+                &Action::Scroll {
+                    target: ScrollTarget::Result,
+                    direction: ScrollDirection::Down,
+                    amount: ScrollAmount::FullPage,
+                },
+            );
+
+            // Should have triggered pagination
+            assert_eq!(state.query.pagination.current_page, 1);
+        }
+
+        #[test]
+        fn pagination_disabled_when_at_end() {
+            let mut state = state_with_result_rows(100, 25);
+            // visible=20, max_scroll=80, scrolled to bottom
+            state.result_interaction.scroll_offset = 80;
+            // Set up pagination state with no more pages
+            state.query.pagination = PaginationState {
+                current_page: 0,
+                total_rows_estimate: Some(100),
+                reached_end: true,
+                schema: "public".to_string(),
+                table: "users".to_string(),
+            };
+
+            // Scroll to end
+            reduce_scroll(
+                &mut state,
+                &Action::Scroll {
+                    target: ScrollTarget::Result,
+                    direction: ScrollDirection::Down,
+                    amount: ScrollAmount::ToEnd,
+                },
+            );
+
+            // Should NOT have triggered pagination
+            assert_eq!(state.query.pagination.current_page, 0);
+        }
+
+        #[test]
+        fn pagination_disabled_when_not_at_bottom() {
+            let mut state = state_with_result_rows(100, 25);
+            // visible=20, max_scroll=80, NOT at bottom
+            state.result_interaction.scroll_offset = 50;
+            // Set up pagination state with more pages available
+            state.query.pagination = PaginationState {
+                current_page: 0,
+                total_rows_estimate: Some(1500),
+                reached_end: false,
+                schema: "public".to_string(),
+                table: "users".to_string(),
+            };
+
+            // Scroll to end
+            reduce_scroll(
+                &mut state,
+                &Action::Scroll {
+                    target: ScrollTarget::Result,
+                    direction: ScrollDirection::Down,
+                    amount: ScrollAmount::ToEnd,
+                },
+            );
+
+            // Should NOT have triggered pagination (not at bottom)
+            assert_eq!(state.query.pagination.current_page, 0);
+        }
+
+        #[test]
+        fn pagination_disabled_when_adhoc_result() {
+            let mut state = state_with_result_rows(100, 25);
+            // visible=20, max_scroll=80, scrolled to bottom
+            state.result_interaction.scroll_offset = 80;
+            // Set up adhoc result (not preview)
+            state.query.clear_current_result();
+            let adhoc_result = QueryResult::success(
+                "SELECT 1".to_string(),
+                vec!["id".to_string()],
+                vec![vec!["1".to_string()]],
+                10,
+                QuerySource::Adhoc,
+            );
+            state.query.set_current_result(Arc::new(adhoc_result));
+
+            // Scroll to end
+            reduce_scroll(
+                &mut state,
+                &Action::Scroll {
+                    target: ScrollTarget::Result,
+                    direction: ScrollDirection::Down,
+                    amount: ScrollAmount::ToEnd,
+                },
+            );
+
+            // Should NOT have triggered pagination (adhoc can't paginate)
+            assert_eq!(state.query.pagination.current_page, 0);
+        }
+
+        #[test]
+        fn pagination_disabled_when_no_rows() {
+            let mut state = AppState::new("test".to_string());
+            state.ui.result_pane_height = 25;
+            // No rows
+            state
+                .query
+                .set_current_result(Arc::new(QueryResult::success(
+                    String::new(),
+                    vec!["id".to_string()],
+                    vec![],
+                    1,
+                    QuerySource::Preview,
+                )));
+            state.query.pagination = PaginationState {
+                current_page: 0,
+                total_rows_estimate: Some(100),
+                reached_end: false,
+                schema: "public".to_string(),
+                table: "users".to_string(),
+            };
+
+            // Scroll to end
+            reduce_scroll(
+                &mut state,
+                &Action::Scroll {
+                    target: ScrollTarget::Result,
+                    direction: ScrollDirection::Down,
+                    amount: ScrollAmount::ToEnd,
+                },
+            );
+
+            // Should NOT have triggered pagination (no rows)
+            assert_eq!(state.query.pagination.current_page, 0);
+        }
+    }
 }
+

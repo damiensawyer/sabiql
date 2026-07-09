@@ -46,6 +46,7 @@ impl SettingsOverlay {
             SettingsSection::Appearance => Self::render_appearance(frame, content, state, theme),
             SettingsSection::Keymap => Self::render_keymap(frame, content, state, theme),
             SettingsSection::ErDiagram => Self::render_er_diagram(frame, content, state, theme),
+            SettingsSection::DefaultRowCount => Self::render_default_row_count(frame, content, state, theme),
         }
     }
 
@@ -214,6 +215,66 @@ impl SettingsOverlay {
         ));
         spans.push(Span::styled(suffix, style));
         lines.push(Line::from(spans));
+
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), content);
+    }
+
+    fn render_default_row_count(frame: &mut Frame, content: Rect, state: &AppState, theme: &ThemePalette) {
+        let mut lines = vec![
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Default Row Count",
+                Style::default()
+                    .fg(theme.semantic.text.primary)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Row count",
+                Style::default().fg(theme.semantic.text.primary),
+            )),
+            Line::raw(""),
+        ];
+
+        let row_count = state.settings.selected_default_row_count();
+        let row_count_str = format!("{row_count}");
+        let display_count = row_count_str.chars().take(6).collect::<String>();
+        let row_count_selected = !state.settings.is_paged_mode();
+        
+        let row_count_marker = if row_count_selected { ">" } else { " " };
+        let row_count_style = theme.picker_selected_style();
+        
+        lines.push(Line::from(Span::styled(
+            format!("  {row_count_marker} {display_count}"),
+            row_count_style,
+        )));
+
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
+            "Paged mode",
+            Style::default()
+                .fg(theme.semantic.text.primary)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::raw(""));
+
+        let paged_mode = state.settings.is_paged_mode();
+        let paged_mode_marker = if paged_mode { ">" } else { " " };
+        
+        lines.push(Line::from(Span::styled(
+            format!("  {paged_mode_marker} Enabled"),
+            if paged_mode {
+                theme.picker_selected_style()
+            } else {
+                Style::default().fg(theme.semantic.text.secondary)
+            },
+        )));
+
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            "Use J/K to adjust row count (by 100). Press x to toggle between row count and paged mode.",
+            Style::default().fg(theme.semantic.text.secondary),
+        ));
 
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), content);
     }

@@ -6,7 +6,6 @@ use std::time::Instant;
 
 use crate::cmd::effect::Effect;
 use crate::model::app_state::AppState;
-use crate::model::browse::query_execution::PREVIEW_PAGE_SIZE;
 use crate::services::AppServices;
 use crate::update::action::Action;
 use crate::update::dispatch_result::DispatchResult;
@@ -30,11 +29,14 @@ pub fn dispatch_query(
 /// `state.session.selection_generation()`; `Action::ExecutePreview` instead
 /// passes the generation captured at selection time, so that results for a
 /// selection cleared in the meantime (e.g. DROP TABLE + reload) are rejected.
+///
+/// `page_size` is the number of rows to fetch per page, defaults to DEFAULT_PAGE_SIZE.
 pub(super) fn preview_effect_for_current_table(
     state: &mut AppState,
     now: Instant,
     target_page: usize,
     generation: u64,
+    page_size: usize,
 ) -> Option<Effect> {
     let dsn = state.session.dsn.clone()?;
     let run_id = state.query.begin_running(now);
@@ -44,8 +46,8 @@ pub(super) fn preview_effect_for_current_table(
         table: state.query.pagination.table.clone(),
         generation,
         run_id,
-        limit: PREVIEW_PAGE_SIZE,
-        offset: target_page * PREVIEW_PAGE_SIZE,
+        limit: page_size,
+        offset: target_page * page_size,
         target_page,
         read_only: state.session.read_only,
     })
