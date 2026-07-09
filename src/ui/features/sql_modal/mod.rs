@@ -20,7 +20,7 @@ use crate::app::update::input::keybindings::{
     sql_modal, sql_modal_compare, sql_modal_normal, sql_modal_plan, sql_modal_plan_explain,
 };
 use crate::primitives::molecules::overlay::{centered_rect, render_scrim};
-use crate::primitives::molecules::{FooterHintBar, render_modal_with_border_color};
+use crate::primitives::molecules::{FooterHintBar, FooterHintItem, render_modal_with_border_color};
 use crate::theme::ThemePalette;
 
 mod completion;
@@ -257,54 +257,57 @@ impl SqlModal {
         services: &AppServices,
         keymap_preset: KeymapPreset,
     ) -> FooterHintBar {
+        fn fih(hint: (&'static str, &'static str, bool)) -> FooterHintItem {
+            FooterHintItem::from_hint_tuple(hint)
+        }
         match tab {
             SqlModalTab::Sql if services.db_capabilities.supported_sql_modal_tabs().len() == 1 => {
                 if services.db_capabilities.supports_explain() {
                     FooterHintBar::new([
-                        sql_modal_normal::RUN.as_hint(),
-                        sql_modal_plan_explain(keymap_preset).as_hint(),
-                        sql_modal_normal::ENTER_INSERT.as_hint(),
-                        sql_modal_normal::CLOSE.as_hint(),
+                        fih(sql_modal_normal::RUN.as_hint()),
+                        fih(sql_modal_plan_explain(keymap_preset).as_hint()),
+                        fih(sql_modal_normal::ENTER_INSERT.as_hint()),
+                        fih(sql_modal_normal::CLOSE.as_hint()),
                     ])
                 } else {
                     FooterHintBar::new([
-                        sql_modal_normal::RUN.as_hint(),
-                        sql_modal_normal::ENTER_INSERT.as_hint(),
-                        sql_modal_normal::CLOSE.as_hint(),
+                        fih(sql_modal_normal::RUN.as_hint()),
+                        fih(sql_modal_normal::ENTER_INSERT.as_hint()),
+                        fih(sql_modal_normal::CLOSE.as_hint()),
                     ])
                 }
             }
             SqlModalTab::Plan => FooterHintBar::new([
-                sql_modal_plan::YANK.as_hint(),
-                ("Tab/⇧Tab", sql_modal_plan::TAB.as_hint().1),
-                sql_modal_plan::CLOSE.as_hint(),
+                fih(sql_modal_plan::YANK.as_hint()),
+                ("Tab/⇧Tab", sql_modal_plan::TAB.as_hint().1).into(),
+                fih(sql_modal_plan::CLOSE.as_hint()),
             ]),
             SqlModalTab::Compare if compare_can_yank => FooterHintBar::new([
-                sql_modal_compare::EDIT_QUERY.as_hint(),
-                sql_modal_compare::YANK.as_hint(),
-                ("Tab/⇧Tab", sql_modal_compare::TAB.as_hint().1),
-                sql_modal_compare::CLOSE.as_hint(),
+                fih(sql_modal_compare::EDIT_QUERY.as_hint()),
+                fih(sql_modal_compare::YANK.as_hint()),
+                ("Tab/⇧Tab", sql_modal_compare::TAB.as_hint().1).into(),
+                fih(sql_modal_compare::CLOSE.as_hint()),
             ]),
             SqlModalTab::Compare => FooterHintBar::new([
-                sql_modal_compare::EDIT_QUERY.as_hint(),
-                ("Tab/⇧Tab", sql_modal_compare::TAB.as_hint().1),
-                sql_modal_compare::CLOSE.as_hint(),
+                fih(sql_modal_compare::EDIT_QUERY.as_hint()),
+                ("Tab/⇧Tab", sql_modal_compare::TAB.as_hint().1).into(),
+                fih(sql_modal_compare::CLOSE.as_hint()),
             ]),
             SqlModalTab::Sql => {
                 if services.db_capabilities.supports_explain() {
                     FooterHintBar::new([
-                        sql_modal_normal::RUN.as_hint(),
-                        sql_modal_plan_explain(keymap_preset).as_hint(),
-                        sql_modal_normal::ENTER_INSERT.as_hint(),
-                        ("Tab/⇧Tab", sql_modal_plan::TAB.as_hint().1),
-                        sql_modal_normal::CLOSE.as_hint(),
+                        fih(sql_modal_normal::RUN.as_hint()),
+                        fih(sql_modal_plan_explain(keymap_preset).as_hint()),
+                        fih(sql_modal_normal::ENTER_INSERT.as_hint()),
+                        ("Tab/⇧Tab", sql_modal_plan::TAB.as_hint().1).into(),
+                        fih(sql_modal_normal::CLOSE.as_hint()),
                     ])
                 } else {
                     FooterHintBar::new([
-                        sql_modal_normal::RUN.as_hint(),
-                        sql_modal_normal::ENTER_INSERT.as_hint(),
-                        ("Tab/⇧Tab", sql_modal_plan::TAB.as_hint().1),
-                        sql_modal_normal::CLOSE.as_hint(),
+                        fih(sql_modal_normal::RUN.as_hint()),
+                        fih(sql_modal_normal::ENTER_INSERT.as_hint()),
+                        ("Tab/⇧Tab", sql_modal_plan::TAB.as_hint().1).into(),
+                        fih(sql_modal_normal::CLOSE.as_hint()),
                     ])
                 }
             }
@@ -312,24 +315,27 @@ impl SqlModal {
     }
 
     fn editing_hint(services: &AppServices, keymap_preset: KeymapPreset) -> FooterHintBar {
+        fn fih(hint: (&'static str, &'static str, bool)) -> FooterHintItem {
+            FooterHintItem::from_hint_tuple(hint)
+        }
         match (services.db_capabilities.supports_explain(), keymap_preset) {
             (true, KeymapPreset::Default) => FooterHintBar::new([
-                sql_modal::RUN.as_hint(),
-                sql_modal_plan::EXPLAIN.as_hint(),
-                sql_modal::CLEAR.as_hint(),
-                sql_modal::QUERY_HISTORY.as_hint(),
-                sql_modal::ESC_NORMAL.as_hint(),
+                fih(sql_modal::RUN.as_hint()),
+                fih(sql_modal_plan::EXPLAIN.as_hint()),
+                fih(sql_modal::CLEAR.as_hint()),
+                fih(sql_modal::QUERY_HISTORY.as_hint()),
+                fih(sql_modal::ESC_NORMAL.as_hint()),
             ]),
             (false, KeymapPreset::Default) => FooterHintBar::new([
-                sql_modal::RUN.as_hint(),
-                sql_modal::CLEAR.as_hint(),
-                sql_modal::QUERY_HISTORY.as_hint(),
-                sql_modal::ESC_NORMAL.as_hint(),
+                fih(sql_modal::RUN.as_hint()),
+                fih(sql_modal::CLEAR.as_hint()),
+                fih(sql_modal::QUERY_HISTORY.as_hint()),
+                fih(sql_modal::ESC_NORMAL.as_hint()),
             ]),
             _ => FooterHintBar::new([
-                sql_modal::RUN.as_hint(),
-                sql_modal::CLEAR.as_hint(),
-                sql_modal::ESC_NORMAL.as_hint(),
+                fih(sql_modal::RUN.as_hint()),
+                fih(sql_modal::CLEAR.as_hint()),
+                fih(sql_modal::ESC_NORMAL.as_hint()),
             ]),
         }
     }

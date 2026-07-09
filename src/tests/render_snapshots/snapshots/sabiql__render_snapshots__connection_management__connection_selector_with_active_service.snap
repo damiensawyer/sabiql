@@ -1,5 +1,6 @@
 ---
 source: src/tests/render_snapshots/connection_management.rs
+assertion_line: 151
 expression: output
 ---
 test_project | - | - | no dsn | localhost:5432/test                                                                                                                  
@@ -51,4 +52,4 @@ test_project | - | - | no dsn | localhost:5432/test
 │                                       ││                                                                                                                          │
 │                                       ││                                                                                                                          │
 └───────────────────────────────────────┘└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-Enter:Confirm  n:New  Esc:Close
+Enter:Confirm  n:New  u:Undo  Esc:Close

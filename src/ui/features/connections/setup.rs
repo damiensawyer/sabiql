@@ -12,7 +12,7 @@ use crate::app::services::AppServices;
 use crate::app::update::input::keybindings::{connection_setup, connection_setup_save};
 use crate::domain::connection::{ConnectionId, ConnectionProfile, SslMode};
 use crate::primitives::atoms::text_cursor_spans;
-use crate::primitives::molecules::{FooterHintBar, render_modal};
+use crate::primitives::molecules::{FooterHintBar, FooterHintItem, render_modal};
 use crate::primitives::utils::text_utils::{take_within_width, truncate_to_width_with};
 use crate::theme::ThemePalette;
 
@@ -54,9 +54,9 @@ impl ConnectionSetup {
             (" New Connection ", "Connect")
         };
         let submit_hints = Self::submit_hints(state, form_state, submit_desc);
-        let mut footer_hints = vec![connection_setup::TAB_NAV.as_hint()];
-        footer_hints.extend(submit_hints);
-        footer_hints.push(("Esc", "Cancel"));
+        let mut footer_hints = vec![FooterHintItem::from_hint_tuple(connection_setup::TAB_NAV.as_hint())];
+        footer_hints.extend(submit_hints.into_iter().map(|(k, d)| FooterHintItem::new(k, d)));
+        footer_hints.push(FooterHintItem::new("Esc", "Cancel"));
         let footer = FooterHintBar::new(footer_hints);
 
         let modal_width = LABEL_WIDTH + INPUT_WIDTH + ERROR_WIDTH + 8;
@@ -173,7 +173,10 @@ impl ConnectionSetup {
     ) -> Vec<(&'static str, &'static str)> {
         if form_state.focused_field == ConnectionField::SslMode {
             vec![
-                connection_setup::ENTER_DROPDOWN.as_hint(),
+                (
+                    connection_setup::ENTER_DROPDOWN.key_short,
+                    connection_setup::ENTER_DROPDOWN.desc_short,
+                ),
                 (connection_setup::SAVE.key_short, submit_desc),
             ]
         } else {

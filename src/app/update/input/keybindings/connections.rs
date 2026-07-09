@@ -307,24 +307,24 @@ pub mod connection_selector {
     };
 
     pub const DELETE: ModeRow = ModeRow {
-        key_short: "d",
-        key: "d",
+        key_short: "D",
+        key: "D",
         desc_short: "Delete",
         description: "Delete connection",
         bindings: &[ExecBinding {
             action: Action::RequestDeleteSelectedConnection,
-            combos: &[KeyCombo::plain(Key::Char('d'))],
+            combos: &[KeyCombo::plain(Key::Char('D'))],
         }],
     };
 
     pub const DUPLICATE: ModeRow = ModeRow {
-        key_short: "D",
-        key: "D",
-        desc_short: "Duplicate",
+        key_short: "d",
+        key: "d",
+        desc_short: "Dup",
         description: "Duplicate connection",
         bindings: &[ExecBinding {
             action: Action::RequestDuplicateSelectedConnection,
-            combos: &[KeyCombo::plain(Key::Char('D'))],
+            combos: &[KeyCombo::plain(Key::Char('d'))],
         }],
     };
 
@@ -340,13 +340,13 @@ pub mod connection_selector {
     };
 
     pub const UNDO: ModeRow = ModeRow {
-        key_short: "U",
-        key: "U",
-        desc_short: "Undo delete",
+        key_short: "u",
+        key: "u",
+        desc_short: "Undo",
         description: "Undo last connection deletion",
         bindings: &[ExecBinding {
             action: Action::RequestUndoConnectionDelete,
-            combos: &[KeyCombo::plain(Key::Char('U'))],
+            combos: &[KeyCombo::plain(Key::Char('u'))],
         }],
     };
 }

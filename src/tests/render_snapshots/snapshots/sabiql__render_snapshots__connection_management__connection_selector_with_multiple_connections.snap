@@ -1,5 +1,6 @@
 ---
 source: src/tests/render_snapshots/connection_management.rs
+assertion_line: 56
 expression: output
 ---
 test_project | - | - | no dsn | localhost:5432/test                                                                                                                  
@@ -42,7 +43,7 @@ test_project | - | - | no dsn | localhost:5432/test
 │                                │                                                                                                 │                                │
 │                                │                                                                                                 │                                │
 │                                │                                                                                                 │                                │
-│                                ╰ Enter: Confirm │ n: New │ e: Edit │ d: Delete │ D: Duplicate │ Esc: Close ──────────────────────╯                                │
+│                                ╰ Enter: Confirm │ n: New │ e: Edit │ D: Delete │ d: Dup │ Esc: Close ────────────────────────────╯                                │
 │                                       ││                                                                                                                          │
 │                                       ││                                                                                                                          │
 │                                       ││                                                                                                                          │
@@ -51,4 +52,4 @@ test_project | - | - | no dsn | localhost:5432/test
 │                                       ││                                                                                                                          │
 │                                       ││                                                                                                                          │
 └───────────────────────────────────────┘└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-Enter:Confirm  n:New  e:Edit  d:Delete  D:Duplicate  Esc:Close
+Enter:Confirm  n:New  e:Edit  D:Delete  d:Dup  u:Undo  Esc:Close

@@ -10,7 +10,7 @@ use crate::domain::er::er_output_filename;
 use crate::theme::ThemePalette;
 
 use crate::features::pickers::PickerRenderMetrics;
-use crate::primitives::molecules::{FooterHintBar, render_filter_input_line, render_modal};
+use crate::primitives::molecules::{FooterHintBar, FooterHintItem, render_filter_input_line, render_modal};
 
 pub struct ErTablePicker;
 
@@ -57,8 +57,7 @@ impl ErTablePicker {
             let selected_vec: Vec<String> = state.ui.er_selected_tables.iter().cloned().collect();
             er_output_filename(&selected_vec, total_count)
         };
-        let select_all_hint =
-            keybindings::er_picker_select_all(state.settings.saved_keymap_preset()).as_hint();
+        let select_all = keybindings::er_picker_select_all(state.settings.saved_keymap_preset());
 
         let (_, inner) = render_modal(
             frame,
@@ -68,10 +67,10 @@ impl ErTablePicker {
             FooterHintBar::with_prefix(
                 format!("{selected_count}/{total_count} selected"),
                 [
-                    ("Space", "Select"),
-                    select_all_hint,
-                    ("Enter", "Generate"),
-                    ("Esc", "Cancel"),
+                    FooterHintItem::new("Space", "Select"),
+                    FooterHintItem::from_hint_tuple(select_all.as_hint()),
+                    FooterHintItem::new("Enter", "Generate"),
+                    FooterHintItem::new("Esc", "Cancel"),
                 ],
             ),
             theme,

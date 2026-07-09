@@ -23,8 +23,8 @@ pub struct KeyBinding {
 }
 
 impl KeyBinding {
-    pub const fn as_hint(&self) -> (&'static str, &'static str) {
-        (self.key_short, self.desc_short)
+    pub const fn as_hint(&self) -> (&'static str, &'static str, bool) {
+        (self.key_short, self.desc_short, false)
     }
 }
 
@@ -46,8 +46,8 @@ pub struct ModeRow {
 }
 
 impl ModeRow {
-    pub const fn as_hint(&self) -> (&'static str, &'static str) {
-        (self.key_short, self.desc_short)
+    pub const fn as_hint(&self) -> (&'static str, &'static str, bool) {
+        (self.key_short, self.desc_short, false)
     }
 }
 

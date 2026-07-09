@@ -449,7 +449,9 @@ mod tests {
         #[case(Key::Enter, Action::ConfirmConnectionSelection)]
         #[case(Key::Char('n'), Action::OpenModal(ModalKind::ConnectionSetup))]
         #[case(Key::Char('e'), Action::RequestEditSelectedConnection)]
-        #[case(Key::Char('d'), Action::RequestDeleteSelectedConnection)]
+        #[case(Key::Char('d'), Action::RequestDuplicateSelectedConnection)]
+        #[case(Key::Char('D'), Action::RequestDeleteSelectedConnection)]
+        #[case(Key::Char('u'), Action::RequestUndoConnectionDelete)]
         fn selector_action_keys(#[case] code: Key, #[case] expected: Action) {
             let result = handle_connection_selector_keys(combo(code));
 

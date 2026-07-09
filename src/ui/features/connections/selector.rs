@@ -13,7 +13,7 @@ use crate::domain::connection::ConnectionId;
 use crate::primitives::atoms::scroll_indicator::{
     VerticalScrollParams, render_vertical_scroll_indicator_bar,
 };
-use crate::primitives::molecules::{FooterHintBar, render_modal};
+use crate::primitives::molecules::{FooterHintBar, FooterHintItem, render_modal};
 use crate::theme::ThemePalette;
 
 const PREFIX_DISPLAY_WIDTH: usize = 2;
@@ -123,19 +123,22 @@ impl ConnectionSelector {
     fn build_hints(
         is_service_selected: bool,
         has_last: bool,
-    ) -> Vec<(&'static str, &'static str)> {
+    ) -> Vec<FooterHintItem> {
         use connection_selector as cs;
 
-        let mut hints = vec![cs::CONFIRM.as_hint(), cs::NEW.as_hint()];
+        let mut hints = vec![
+            FooterHintItem::new(cs::CONFIRM.key_short, cs::CONFIRM.desc_short),
+            FooterHintItem::new(cs::NEW.key_short, cs::NEW.desc_short),
+        ];
         if !is_service_selected {
-            hints.push(cs::EDIT.as_hint());
-            hints.push(cs::DELETE.as_hint());
-            hints.push(cs::DUPLICATE.as_hint());
+            hints.push(FooterHintItem::new(cs::EDIT.key_short, cs::EDIT.desc_short));
+            hints.push(FooterHintItem::new(cs::DELETE.key_short, cs::DELETE.desc_short));
+            hints.push(FooterHintItem::new(cs::DUPLICATE.key_short, cs::DUPLICATE.desc_short));
         }
         if has_last {
-            hints.push(("Tab/⇧Tab", "Toggle panels"));
+            hints.push(FooterHintItem::new("u", "Undo").disabled());
         }
-        hints.push(cs::CLOSE.as_hint());
+        hints.push(FooterHintItem::new(cs::CLOSE.key_short, cs::CLOSE.desc_short));
 
         hints
     }

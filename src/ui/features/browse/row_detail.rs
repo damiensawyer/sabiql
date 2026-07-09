@@ -12,7 +12,7 @@ use crate::primitives::atoms::scroll_indicator::{
     HorizontalScrollParams, VerticalScrollParams, clamp_scroll_offset,
     render_horizontal_scroll_indicator, render_vertical_scroll_indicator_bar,
 };
-use crate::primitives::molecules::{FooterHintBar, render_modal};
+use crate::primitives::molecules::{FooterHintBar, FooterHintItem, render_modal};
 use crate::theme::ThemePalette;
 
 pub struct RowDetailRenderMetrics {
@@ -34,7 +34,7 @@ impl RowDetail {
         }
 
         let title = " Row Detail ";
-        let hints = ROW_DETAIL_ROWS.iter().map(ModeRow::as_hint);
+        let hints = ROW_DETAIL_ROWS.iter().map(ModeRow::as_hint).map(FooterHintItem::from_hint_tuple);
 
         let (_area, inner) = render_modal(
             frame,

@@ -24,6 +24,7 @@ use crate::features::settings::hints::settings_hints;
 use crate::primitives::atoms::key_text;
 use crate::primitives::atoms::spinner_char;
 use crate::primitives::atoms::status_message::{MessageType, StatusMessage};
+use crate::primitives::molecules::HintTuple;
 use crate::theme::ThemePalette;
 
 pub struct Footer;
@@ -85,7 +86,7 @@ impl Footer {
     fn get_context_hints(
         state: &AppState,
         services: &AppServices,
-    ) -> Vec<(&'static str, &'static str)> {
+    ) -> Vec<HintTuple> {
         use crate::app::model::shared::focused_pane::FocusedPane;
 
         match state.input_mode() {
@@ -347,10 +348,12 @@ impl Footer {
                     list.push(cs::DUPLICATE.as_hint());
                 }
                 if has_last {
-                    list.push(("Tab/⇧Tab", "Toggle panels"));
+                    list.push(("Tab/⇧Tab", "Toggle panels", false));
                 }
                 if state.has_connection_delete_undo() {
-                    list.push(("U", "Undo delete"));
+                    list.push(cs::UNDO.as_hint());
+                } else {
+                    list.push(("u", "Undo", true));
                 }
                 list.push(cs::CLOSE.as_hint());
                 list
@@ -359,7 +362,7 @@ impl Footer {
     }
 
     fn build_hint_line_with_success(
-        hints: &[(&str, &str)],
+        hints: &[HintTuple],
         success_msg: Option<&str>,
         theme: &ThemePalette,
     ) -> Line<'static> {
@@ -372,7 +375,7 @@ impl Footer {
             ));
         }
 
-        for (i, (key, desc)) in hints.iter().enumerate() {
+        for (i, (key, desc, _disabled)) in hints.iter().enumerate() {
             if i > 0 {
                 spans.push(Span::raw("  "));
             }
@@ -480,9 +483,9 @@ mod tests {
 
         let hints = Footer::get_context_hints(&state, &services);
 
-        assert!(hints.contains(&("i", "Edit")));
-        assert!(hints.contains(&("Tab/⇧Tab", "Section")));
-        assert!(hints.contains(&("Esc", "Cancel")));
+        assert!(hints.contains(&("i", "Edit", false)));
+        assert!(hints.contains(&("Tab/⇧Tab", "Section", false)));
+        assert!(hints.contains(&("Esc", "Cancel", false)));
     }
 
     #[test]
@@ -498,7 +501,7 @@ mod tests {
 
         assert_eq!(
             hints,
-            vec![("Enter", "Apply"), ("Esc", "Done"), ("Type", "Browser")]
+            vec![("Enter", "Apply", false), ("Esc", "Done", false), ("Type", "Browser", false)]
         );
     }
 
@@ -513,7 +516,7 @@ mod tests {
 
         let hints = Footer::get_context_hints(&state, &services);
 
-        assert!(!hints.contains(&("^E", "Explain")));
+        assert!(!hints.contains(&("^E", "Explain", false)));
     }
 
     #[test]
@@ -527,6 +530,6 @@ mod tests {
 
         assert!(hints.contains(&connection_setup::ENTER_DROPDOWN.as_hint()));
         assert!(hints.contains(&connection_setup::SAVE.as_hint()));
-        assert!(!hints.contains(&("Enter", "Connect")));
+        assert!(!hints.contains(&("Enter", "Connect", false)));
     }
 }
