@@ -110,12 +110,11 @@ pub fn reduce_connection_list(
                 _ => None,
             };
 
-            // Track the selected connection as last in state
-            if let Some(ConnectionListItem::Profile(i)) = state.connection_list_items().get(selected_idx)
-            {
-                if let Some(conn) = state.connections().get(*i) {
-                    state.set_last_connection_id(Some(conn.id.clone()));
-                }
+            // Save the currently active connection as the next toggle target.
+            // This way, pressing C again after connecting to a different profile
+            // will toggle back to the one we just left.
+            if let Some(current_id) = state.session.active_connection_id.clone() {
+                state.set_last_connection_id(Some(current_id));
             }
 
             state.modal.set_mode(InputMode::Normal);

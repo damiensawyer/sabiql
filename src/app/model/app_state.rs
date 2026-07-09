@@ -347,6 +347,19 @@ impl AppState {
     pub fn is_stale_query_run(&self, dsn: &str, run_id: u64) -> bool {
         self.session.dsn.as_deref() != Some(dsn) || !self.query.is_current_run(run_id)
     }
+
+    /// Whether a last connection has been set in memory (not persisted to disk).
+    pub fn has_last_connection_id(&self) -> bool {
+        self.last_connection_id.is_some()
+    }
+
+    /// Get the last connection profile by its stored ID, if still available.
+    pub fn last_connection_profile_mut(&mut self) -> Option<&mut ConnectionProfile> {
+        self.last_connection_id
+            .as_ref()
+            .and_then(|id| self.connections.iter().position(|c| &c.id == id))
+            .map(|idx| &mut self.connections[idx])
+    }
 }
 
 #[cfg(test)]

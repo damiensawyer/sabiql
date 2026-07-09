@@ -306,6 +306,7 @@ pub enum Action {
     // Connections
     TryConnect,
     SwitchConnection(ConnectionTarget),
+    SwitchToLastConnection,
     ConnectionsLoaded(ConnectionsLoadedPayload),
     ConfirmConnectionSelection,
     StartEditConnection(ConnectionId),

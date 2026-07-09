@@ -338,6 +338,17 @@ pub mod connection_selector {
             combos: &[KeyCombo::plain(Key::Esc)],
         }],
     };
+
+    pub const UNDO: ModeRow = ModeRow {
+        key_short: "U",
+        key: "U",
+        desc_short: "Undo delete",
+        description: "Undo last connection deletion",
+        bindings: &[ExecBinding {
+            action: Action::RequestUndoConnectionDelete,
+            combos: &[KeyCombo::plain(Key::Char('U'))],
+        }],
+    };
 }
 
 pub const CONNECTION_SELECTOR_ROWS: &[ModeRow] = &[
@@ -348,5 +359,6 @@ pub const CONNECTION_SELECTOR_ROWS: &[ModeRow] = &[
     connection_selector::EDIT,
     connection_selector::DELETE,
     connection_selector::DUPLICATE,
+    connection_selector::UNDO,
     connection_selector::CLOSE,
 ];

@@ -132,8 +132,9 @@ pub fn handle_normal_mode(combo: KeyCombo, state: &AppState) -> Action {
         }
         Key::Char('s') => Action::OpenModal(ModalKind::SqlModal),
         Key::Char('e') => Action::OpenModal(ModalKind::ErTablePicker),
-        Key::Char('c') if state.ui.focused_pane == FocusedPane::Explorer => {
-            Action::OpenModal(ModalKind::ConnectionSelector)
+        Key::Char('c') => Action::OpenModal(ModalKind::ConnectionSelector),
+        Key::Char('C') if state.has_last_connection_id() => {
+            Action::SwitchToLastConnection
         }
 
         Key::Char('z') => Action::BeginKeySequence(Prefix::Z),
@@ -692,12 +693,15 @@ mod tests {
             }
 
             #[test]
-            fn c_noop() {
+            fn c_opens_connection_selector_from_inspector() {
                 let state = inspector_focused_state();
 
                 let result = handle_normal_mode(combo(Key::Char('c')), &state);
 
-                assert!(matches!(result, Action::None));
+                assert!(matches!(
+                    result,
+                    Action::OpenModal(ModalKind::ConnectionSelector)
+                ));
             }
         }
 
@@ -849,12 +853,15 @@ mod tests {
             }
 
             #[test]
-            fn c_noop() {
+            fn c_opens_connection_selector_from_result() {
                 let state = result_focused_state();
 
                 let result = handle_normal_mode(combo(Key::Char('c')), &state);
 
-                assert!(matches!(result, Action::None));
+                assert!(matches!(
+                    result,
+                    Action::OpenModal(ModalKind::ConnectionSelector)
+                ));
             }
         }
 

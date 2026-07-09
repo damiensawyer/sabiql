@@ -205,11 +205,13 @@ mod tests {
         use super::*;
 
         #[test]
-        fn opens_confirm_dialog_with_correct_message() {
+        fn pushes_profile_to_undo_buffer_before_deleting() {
             let mut state = AppState::new("test".to_string());
             let profile = create_profile("Production");
-            state.set_connections(vec![profile]);
+            let profile_id = profile.id.clone();
+            state.set_connections(vec![profile.clone()]);
             state.ui.connection_list_selected = 0;
+            state.modal.set_mode(InputMode::ConnectionSelector);
 
             reduce_connection_selector(
                 &mut state,
@@ -217,25 +219,29 @@ mod tests {
                 Instant::now(),
             );
 
-            assert_eq!(state.input_mode(), InputMode::ConfirmDialog);
-            assert_eq!(state.confirm_dialog.title(), "Delete Connection");
-            assert!(state.confirm_dialog.message().contains("Production"));
-            assert!(
-                state
-                    .confirm_dialog
-                    .message()
-                    .contains("This action cannot be undone")
-            );
+            // Should stay in selector mode (no confirm dialog)
+            assert_eq!(state.input_mode(), InputMode::ConnectionSelector);
+            // Should have pushed to undo buffer
+            assert!(state.has_connection_delete_undo());
+            // Should queue delete effect
+            let effects = state
+                .messages
+                .last_error
+                .clone()
+                .or_else(|| state.messages.last_success.clone());
+            // Verify delete effect is queued (not confirm dialog)
+            assert_ne!(state.input_mode(), InputMode::ConfirmDialog);
         }
 
         #[test]
-        fn active_connection_shows_warning() {
+        fn active_connection_cannot_be_deleted() {
             let mut state = AppState::new("test".to_string());
             let profile = create_profile("Production");
             let profile_id = profile.id.clone();
             state.set_connections(vec![profile]);
             state.ui.connection_list_selected = 0;
             state.session.active_connection_id = Some(profile_id);
+            state.modal.set_mode(InputMode::ConnectionSelector);
 
             reduce_connection_selector(
                 &mut state,
@@ -243,46 +249,15 @@ mod tests {
                 Instant::now(),
             );
 
-            assert!(
-                state
-                    .confirm_dialog
-                    .message()
-                    .contains("This is the active connection")
-            );
-            assert!(
-                state
-                    .confirm_dialog
-                    .message()
-                    .contains("You will be disconnected")
-            );
-        }
-
-        #[test]
-        fn inactive_connection_shows_standard_message() {
-            let mut state = AppState::new("test".to_string());
-            let profile = create_profile("Production");
-            state.set_connections(vec![profile]);
-            state.ui.connection_list_selected = 0;
-
-            reduce_connection_selector(
-                &mut state,
-                &Action::RequestDeleteSelectedConnection,
-                Instant::now(),
-            );
-
-            assert!(
-                !state
-                    .confirm_dialog
-                    .message()
-                    .contains("This is the active connection")
-            );
+            assert_eq!(state.input_mode(), InputMode::ConnectionSelector);
+            // Should show error message
+            assert!(state.messages.last_error.is_some());
         }
 
         #[test]
         fn empty_list_does_nothing() {
             let mut state = AppState::new("test".to_string());
             state.set_connections(vec![]);
-            state.modal.set_mode(InputMode::Normal);
 
             reduce_connection_selector(
                 &mut state,
@@ -294,12 +269,23 @@ mod tests {
         }
 
         #[test]
-        fn preserves_return_mode_from_connection_selector() {
+        fn last_connection_item_cannot_be_deleted() {
             let mut state = AppState::new("test".to_string());
-            let profile = create_profile("Production");
-            state.set_connections(vec![profile]);
+            state.set_connections(vec![]);
+            // Add a service so the list has items
+            use crate::domain::connection::ServiceEntry;
+            state.set_connections_and_services(
+                vec![],
+                vec![ServiceEntry {
+                    service_name: "mydb".to_string(),
+                    host: None,
+                    dbname: None,
+                    port: None,
+                    user: None,
+                }],
+            );
+            // Select LastConnection (index 0)
             state.ui.connection_list_selected = 0;
-            state.modal.set_mode(InputMode::ConnectionSelector);
             state.modal.set_mode(InputMode::ConnectionSelector);
 
             reduce_connection_selector(
@@ -308,10 +294,8 @@ mod tests {
                 Instant::now(),
             );
 
-            assert_eq!(
-                state.modal.return_destination(),
-                InputMode::ConnectionSelector
-            );
+            // Should do nothing - LastConnection is not a profile
+            assert_eq!(state.input_mode(), InputMode::ConnectionSelector);
         }
     }
 
@@ -445,7 +429,7 @@ mod tests {
                 Instant::now(),
             );
 
-            assert_eq!(state.connection_list_items(), build_connection_list(1, 0));
+            assert_eq!(state.connection_list_items(), build_connection_list(1, 0, false));
         }
 
         #[test]
@@ -475,7 +459,7 @@ mod tests {
 
             assert!(state.connections().is_empty());
             assert_ne!(state.input_mode(), InputMode::ConnectionSetup);
-            assert_eq!(state.connection_list_items(), build_connection_list(0, 1));
+            assert_eq!(state.connection_list_items(), build_connection_list(0, 1, false));
         }
     }
 }

@@ -42,7 +42,7 @@ impl ConnectionSelector {
         if has_last {
             Self::render_two_panel_list(frame, inner, state, theme)
         } else {
-            render_connection_list(frame, inner, state, theme)
+            render_connection_list(frame, inner, state, theme, false)
         }
     }
 
@@ -84,17 +84,29 @@ impl ConnectionSelector {
         ])
         .split(area);
 
-        // Top panel: last connection
+        // Top panel: last connection — real List widget so the cursor moves here on Tab
         if let Some(name) = last_conn_display {
-            let last_style = Style::default()
-                .fg(theme.semantic.text.accent)
-                .add_modifier(Modifier::BOLD);
-            let line = Line::from(Span::styled(
-                format!("  Open last: {name}  "),
-                last_style,
-            ));
-            let para = Paragraph::new(line).style(Style::default().fg(theme.semantic.text.secondary));
-            frame.render_widget(para, chunks[0]);
+            let is_selected = state.ui.connection_list_selected == 0;
+            let style = if is_selected {
+                Style::default()
+                    .fg(theme.semantic.text.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.semantic.text.secondary)
+            };
+            let item = ListItem::new(format!("  Open last: {name}  ")).style(style);
+
+            let list = List::new(vec![item])
+                .highlight_style(
+                    Style::default()
+                        .fg(theme.semantic.text.accent)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol(">");
+
+            let mut top_list_state = ListState::default()
+                .with_selected(if is_selected { Some(0) } else { None });
+            frame.render_stateful_widget(list, chunks[0], &mut top_list_state);
         }
 
         // Divider
@@ -104,7 +116,7 @@ impl ConnectionSelector {
         frame.render_widget(divider_para, chunks[1]);
 
         // Bottom panel: regular connections
-        render_connection_list(frame, chunks[2], state, theme);
+        render_connection_list(frame, chunks[2], state, theme, true);
         area.height
     }
 
@@ -200,6 +212,7 @@ pub fn render_connection_list(
     area: Rect,
     state: &AppState,
     theme: &ThemePalette,
+    has_top_panel: bool,
 ) -> u16 {
     let active_id = state.session.active_connection_id.as_ref();
 
@@ -207,13 +220,9 @@ pub fn render_connection_list(
     let content_width = area.width.saturating_sub(2) as usize;
     let source_label = "from pg_service.conf";
 
-    // Filter out LastConnection items (they're shown in the top panel)
-    let bottom_items: Vec<&ConnectionListItem> = state
-        .connection_list_items()
-        .iter()
-        .filter(|item| !matches!(item, ConnectionListItem::LastConnection))
-        .collect();
-
+    // Bottom panel excludes LastConnection (already shown in top panel)
+    let bottom_items =
+        crate::app::model::connection::list::bottom_panel_items(state.connection_list_items());
     let items: Vec<ListItem> = if bottom_items.is_empty() {
         vec![ListItem::new(" No connections")]
     } else {
@@ -235,7 +244,10 @@ pub fn render_connection_list(
                         theme,
                     )
                 }
-                ConnectionListItem::LastConnection => ListItem::new(""),
+                ConnectionListItem::LastConnection => {
+                    // Last connection displayed in bottom panel too
+                    ListItem::new("")
+                }
             })
             .collect()
     };
@@ -248,13 +260,23 @@ pub fn render_connection_list(
         )
         .highlight_symbol("> ");
 
+    // When a top panel is shown, the bottom panel's item indices are offset
+    // by one (the LastConnection item at index 0 is excluded). Adjust the
+    // highlight index accordingly so the selection marker appears on the
+    // correct visual row.
+    let adjusted_selected = if has_top_panel && state.ui.connection_list_selected > 0 {
+        state.ui.connection_list_selected - 1
+    } else {
+        state.ui.connection_list_selected
+    };
+
     let mut list_state = ListState::default()
-        .with_selected(Some(state.ui.connection_list_selected))
+        .with_selected(Some(adjusted_selected))
         .with_offset(state.ui.connection_list_scroll_offset);
     frame.render_stateful_widget(list, area, &mut list_state);
 
-    if !state.connection_list_items().is_empty() {
-        let total_items = state.connection_list_items().len();
+    if !bottom_items.is_empty() {
+        let total_items = bottom_items.len();
         let viewport_size = area.height as usize;
 
         if total_items > viewport_size {

@@ -383,27 +383,6 @@ mod tests {
             }
 
             #[test]
-            fn delete_connection_returns_delete_effect() {
-                let mut state = create_test_state();
-                enter_confirm_dialog(&mut state, InputMode::ConnectionSelector);
-                let id = crate::domain::ConnectionId::new();
-                state
-                    .confirm_dialog
-                    .open("", "", ConfirmIntent::DeleteConnection(id));
-
-                let effects = super::dispatch_modal(
-                    &mut state,
-                    &Action::ConfirmDialogConfirm,
-                    Instant::now(),
-                )
-                .unwrap();
-
-                assert_eq!(state.input_mode(), InputMode::ConnectionSelector);
-                assert_eq!(effects.len(), 1);
-                assert!(matches!(&effects[0], Effect::DeleteConnection { .. }));
-            }
-
-            #[test]
             fn execute_write_sets_running_state_and_returns_effect() {
                 let mut state = create_test_state();
                 enter_confirm_dialog(&mut state, InputMode::CellEdit);
