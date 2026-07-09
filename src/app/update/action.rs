@@ -498,6 +498,13 @@ pub enum Action {
     SqlModalConfirmExecute,
     SqlModalNextTab,
     SqlModalPrevTab,
+    ExternalEditorOpen {
+        file: std::path::PathBuf,
+    },
+    ExternalEditorUpdated {
+        content: String,
+    },
+    ExternalEditorFailed(String),
     CompletionRequest,
     CompletionUpdated {
         candidates: Vec<CompletionCandidate>,

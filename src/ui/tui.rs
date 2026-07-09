@@ -114,7 +114,13 @@ impl TuiRunner {
 
     fn start_event_loop(&mut self) {
         let event_tx = self.event_tx.clone();
-        let cancellation_token = self.cancellation_token.clone();
+        // CancellationToken is one-shot: once stop_event_loop() cancels it,
+        // it stays cancelled forever. A fresh token is needed on every
+        // (re)start (e.g. resuming after an external editor session), or
+        // the new task's `cancelled()` future resolves immediately and it
+        // exits before reading any input.
+        let cancellation_token = CancellationToken::new();
+        self.cancellation_token = cancellation_token.clone();
 
         self.task = Some(tokio::spawn(async move {
             let mut event_stream = EventStream::new();

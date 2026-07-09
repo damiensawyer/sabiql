@@ -13,6 +13,7 @@ use crate::cmd::completion_engine::CompletionEngine;
 use crate::cmd::connection as cmd_connection;
 use crate::cmd::effect::Effect;
 use crate::cmd::er::handler as cmd_er;
+use crate::cmd::external_editor as cmd_external_editor;
 use crate::cmd::metadata_task::MetadataTaskRegistry;
 use crate::cmd::settings as cmd_settings;
 use crate::cmd::single_task_owner::SingleTaskOwner;
@@ -152,6 +153,31 @@ impl EffectRunner {
                 )
                 .await;
                 Ok(vec![])
+            }
+
+            Effect::LaunchExternalEditor { file } => {
+                let content = state.sql_modal.editor.content().to_string();
+
+                // Suspend our terminal control (raw mode, alternate screen,
+                // background input reader) *before* the editor spawns, and
+                // await the blocking task so this effect runner — and thus
+                // the whole main loop — doesn't proceed until the editor
+                // exits. Without awaiting, the main loop's animation ticks
+                // and input reader kept touching the terminal concurrently
+                // with the editor, which is what caused the underlying UI
+                // to punch through while the editor was open.
+                tui.suspend()?;
+                let result = tokio::task::spawn_blocking(move || {
+                    cmd_external_editor::run_sync(&file, &content)
+                })
+                .await;
+                tui.resume()?;
+
+                match result {
+                    Ok(Ok(content)) => Ok(vec![Action::ExternalEditorUpdated { content }]),
+                    Ok(Err(e)) => Ok(vec![Action::ExternalEditorFailed(e.to_string())]),
+                    Err(join_err) => Ok(vec![Action::ExternalEditorFailed(join_err.to_string())]),
+                }
             }
 
             e @ (Effect::SaveAndConnect { .. }
