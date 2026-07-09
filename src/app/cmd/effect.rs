@@ -140,6 +140,9 @@ pub enum Effect {
     OpenFolder {
         path: std::path::PathBuf,
     },
+    LaunchExternalEditor {
+        file: std::path::PathBuf,
+    },
 
     LoadQueryHistory {
         project_name: String,

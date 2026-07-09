@@ -2619,6 +2619,7 @@ version = "1.14.0"
 dependencies = [
  "async-trait",
  "color-eyre",
+ "crossterm",
  "csv",
  "dirs",
  "lru",

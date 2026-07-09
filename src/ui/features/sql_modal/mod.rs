@@ -264,12 +264,14 @@ impl SqlModal {
                         sql_modal_normal::RUN.as_hint(),
                         sql_modal_plan_explain(keymap_preset).as_hint(),
                         sql_modal_normal::ENTER_INSERT.as_hint(),
+                        sql_modal_normal::EXTERNAL_EDITOR.as_hint(),
                         sql_modal_normal::CLOSE.as_hint(),
                     ])
                 } else {
                     FooterHintBar::new([
                         sql_modal_normal::RUN.as_hint(),
                         sql_modal_normal::ENTER_INSERT.as_hint(),
+                        sql_modal_normal::EXTERNAL_EDITOR.as_hint(),
                         sql_modal_normal::CLOSE.as_hint(),
                     ])
                 }
@@ -296,6 +298,7 @@ impl SqlModal {
                         sql_modal_normal::RUN.as_hint(),
                         sql_modal_plan_explain(keymap_preset).as_hint(),
                         sql_modal_normal::ENTER_INSERT.as_hint(),
+                        sql_modal_normal::EXTERNAL_EDITOR.as_hint(),
                         ("Tab/⇧Tab", sql_modal_plan::TAB.as_hint().1),
                         sql_modal_normal::CLOSE.as_hint(),
                     ])
@@ -303,6 +306,7 @@ impl SqlModal {
                     FooterHintBar::new([
                         sql_modal_normal::RUN.as_hint(),
                         sql_modal_normal::ENTER_INSERT.as_hint(),
+                        sql_modal_normal::EXTERNAL_EDITOR.as_hint(),
                         ("Tab/⇧Tab", sql_modal_plan::TAB.as_hint().1),
                         sql_modal_normal::CLOSE.as_hint(),
                     ])
@@ -318,17 +322,20 @@ impl SqlModal {
                 sql_modal_plan::EXPLAIN.as_hint(),
                 sql_modal::CLEAR.as_hint(),
                 sql_modal::QUERY_HISTORY.as_hint(),
+                sql_modal::EXTERNAL_EDITOR.as_hint(),
                 sql_modal::ESC_NORMAL.as_hint(),
             ]),
             (false, KeymapPreset::Default) => FooterHintBar::new([
                 sql_modal::RUN.as_hint(),
                 sql_modal::CLEAR.as_hint(),
                 sql_modal::QUERY_HISTORY.as_hint(),
+                sql_modal::EXTERNAL_EDITOR.as_hint(),
                 sql_modal::ESC_NORMAL.as_hint(),
             ]),
             _ => FooterHintBar::new([
                 sql_modal::RUN.as_hint(),
                 sql_modal::CLEAR.as_hint(),
+                sql_modal::EXTERNAL_EDITOR.as_hint(),
                 sql_modal::ESC_NORMAL.as_hint(),
             ]),
         }

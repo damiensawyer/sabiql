@@ -1,5 +1,6 @@
 ---
 source: src/tests/render_snapshots/overlays.rs
+assertion_line: 445
 expression: output
 ---
 test_project | test_db | - | no dsn | localhost:54
@@ -10,6 +11,7 @@ test_project | test_db | - | no dsn | localhost:54
 │       │                             Mov││      │
 │       │                             Lin││      │
 │       │                             Ins││      │
+│       │                             Ope││      │
 │       │                             Pre││      │
 │       │                             Edi┃│      │
 │       │                             Mov┃│      │

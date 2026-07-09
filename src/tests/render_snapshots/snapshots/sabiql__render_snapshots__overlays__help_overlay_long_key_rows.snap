@@ -1,5 +1,6 @@
 ---
 source: src/tests/render_snapshots/overlays.rs
+assertion_line: 429
 expression: output
 ---
 test_project | test_db | - | no dsn | localhost:5432/test                                                                                                            
@@ -13,6 +14,7 @@ test_project | test_db | - | no dsn | localhost:5432/test
 │                        │  ↑↓←→                                         Move cursor                                                      ││                        │
 │                        │  Home/End                                     Line start/end                                                   ││                        │
 │                        │  Tab                                          Insert tab / Accept completion                                   ││                        │
+│                        │  Ctrl+X                                       Open external editor                                             ││                        │
 │                        │  :w                                           Preview and confirm UPDATE                                       ││                        │
 │                        │  type                                         Edit cell value                                                  ││                        │
 │                        │  ←→                                           Move cursor                                                      ││                        │

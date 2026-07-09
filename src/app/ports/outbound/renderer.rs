@@ -27,4 +27,18 @@ pub trait Renderer {
         services: &AppServices,
         now: Instant,
     ) -> RenderResult<RenderOutput>;
+
+    /// Give up exclusive control of the terminal (raw mode, alternate
+    /// screen, background input reader) so an external process can take
+    /// over. No-op by default; real terminal renderers must override this.
+    fn suspend(&mut self) -> RenderResult<()> {
+        Ok(())
+    }
+
+    /// Reclaim exclusive control of the terminal after [`Renderer::suspend`]
+    /// and force a full repaint, since the physical screen content is no
+    /// longer known to match whatever the renderer last drew.
+    fn resume(&mut self) -> RenderResult<()> {
+        Ok(())
+    }
 }

@@ -135,6 +135,11 @@ pub fn handle_sql_modal_keys_with_prefix(
         if plain && combo.key == Key::Char('g') {
             return Action::BeginKeySequence(Prefix::G);
         }
+        if ctrl && !alt && !shift && combo.key == Key::Char('x') {
+            return Action::ExternalEditorOpen {
+                file: std::path::PathBuf::new(),
+            };
+        }
         if plain && combo.key == Key::Home {
             return Action::TextMoveCursor {
                 target: InputTarget::SqlModal,
@@ -322,6 +327,12 @@ pub fn handle_sql_modal_keys_with_prefix(
             Key::Esc | Key::Left | Key::Right => return Action::CompletionDismiss,
             _ => {}
         }
+    }
+
+    if ctrl_only && combo.key == Key::Char('x') {
+        return Action::ExternalEditorOpen {
+            file: std::path::PathBuf::new(),
+        };
     }
 
     if let Some(action) = action_for_key(
