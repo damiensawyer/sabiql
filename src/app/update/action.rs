@@ -333,7 +333,13 @@ pub enum Action {
     DeleteConnection(ConnectionId),
     ConnectionDeleted(ConnectionId),
     ConnectionDeleteFailed(ConnectionStoreError),
+    RequestDuplicateSelectedConnection,
+    DuplicateConnection(ConnectionId),
+    ConnectionDuplicated(ConnectionId),
+    DuplicateConnectionFailed(ConnectionSaveError),
     RequestEditSelectedConnection,
+    RequestUndoConnectionDelete,
+    ConnectionUndo(ConnectionId),
 
     // Settings
     SettingsSelectNext,

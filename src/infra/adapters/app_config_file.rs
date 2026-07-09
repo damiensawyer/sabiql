@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 pub const CONFIG_FILE_NAME: &str = "connections.toml";
+pub const LAST_CONNECTION_FILE_NAME: &str = "last_connection_id.txt";
 
 static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 static CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
@@ -63,6 +64,29 @@ pub fn render_config_file(content: &str) -> String {
     format!(
         "# sabiql configuration\n# WARNING: Connection passwords are stored in plain text\n\n{content}"
     )
+}
+
+/// Get the path to the temp file that stores the last connection ID.
+pub fn last_connection_file_path(config_dir: &Path) -> PathBuf {
+    config_dir.join(LAST_CONNECTION_FILE_NAME)
+}
+
+/// Write the last connection ID to the temp file.
+pub fn write_last_connection_id(
+    config_dir: &Path,
+    connection_id: &str,
+) -> Result<(), std::io::Error> {
+    fs::write(last_connection_file_path(config_dir), connection_id)
+}
+
+/// Read the last connection ID from the temp file. Returns None if file doesn't exist.
+pub fn read_last_connection_id(config_dir: &Path) -> Result<Option<String>, std::io::Error> {
+    let path = last_connection_file_path(config_dir);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&path)?;
+    Ok(Some(content.trim().to_string()))
 }
 
 #[cfg(unix)]

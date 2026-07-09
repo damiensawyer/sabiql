@@ -337,10 +337,20 @@ impl Footer {
                     state.connection_list_items(),
                     state.ui.connection_list_selected,
                 );
+                let has_last = crate::app::model::connection::list::has_last_connection(
+                    state.connection_list_items(),
+                );
                 let mut list = vec![cs::CONFIRM.as_hint(), cs::NEW.as_hint()];
                 if !is_service_selected {
                     list.push(cs::EDIT.as_hint());
                     list.push(cs::DELETE.as_hint());
+                    list.push(cs::DUPLICATE.as_hint());
+                }
+                if has_last {
+                    list.push(("Tab/⇧Tab", "Toggle panels"));
+                }
+                if state.has_connection_delete_undo() {
+                    list.push(("U", "Undo delete"));
                 }
                 list.push(cs::CLOSE.as_hint());
                 list

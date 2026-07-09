@@ -79,18 +79,44 @@ pub fn reduce_connection_list(
             let selected_idx = state.ui.connection_list_selected;
 
             let effect = match state.connection_list_items().get(selected_idx) {
-                Some(ConnectionListItem::Profile(i)) => state
-                    .connections()
-                    .get(*i)
-                    .filter(|c| state.session.active_connection_id.as_ref() != Some(&c.id))
-                    .map(|_| Effect::SwitchConnection {
-                        connection_index: *i,
-                    }),
+                Some(ConnectionListItem::LastConnection) => {
+                    // Open the last connection if it exists
+                    let profile_idx = state.last_connection_profile_index();
+                    if profile_idx.is_some() {
+                        state.modal.set_mode(InputMode::Normal);
+                        Some(Effect::SwitchConnection {
+                            connection_index: profile_idx.unwrap(),
+                        })
+                    } else {
+                        state.modal.set_mode(InputMode::Normal);
+                        None
+                    }
+                }
+                Some(ConnectionListItem::Profile(i)) => {
+                    let conn = state.connections().get(*i);
+                    conn.filter(|c| state.session.active_connection_id.as_ref() != Some(&c.id))
+                        .map(|_| Effect::SwitchConnection {
+                            connection_index: *i,
+                        })
+                        .or_else(|| {
+                            // If already active, still save as last and go to normal
+                            state.modal.set_mode(InputMode::Normal);
+                            None
+                        })
+                }
                 Some(ConnectionListItem::Service(i)) => {
                     Some(Effect::SwitchToService { service_index: *i })
                 }
                 _ => None,
             };
+
+            // Track the selected connection as last in state
+            if let Some(ConnectionListItem::Profile(i)) = state.connection_list_items().get(selected_idx)
+            {
+                if let Some(conn) = state.connections().get(*i) {
+                    state.set_last_connection_id(Some(conn.id.clone()));
+                }
+            }
 
             state.modal.set_mode(InputMode::Normal);
 

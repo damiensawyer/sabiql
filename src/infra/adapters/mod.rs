@@ -1,4 +1,4 @@
-mod app_config_file;
+pub mod app_config_file;
 
 pub mod clipboard;
 pub mod config_writer;

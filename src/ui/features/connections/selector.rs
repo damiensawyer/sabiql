@@ -1,11 +1,13 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState};
+use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::app::model::app_state::AppState;
-use crate::app::model::connection::list::ConnectionListItem;
+use crate::app::model::connection::list::{
+    ConnectionListItem, has_last_connection,
+};
 use crate::app::update::input::keybindings::connection_selector;
 use crate::domain::connection::ConnectionId;
 use crate::primitives::atoms::scroll_indicator::{
@@ -15,18 +17,19 @@ use crate::primitives::molecules::{FooterHintBar, render_modal};
 use crate::theme::ThemePalette;
 
 const PREFIX_DISPLAY_WIDTH: usize = 2;
-
 const SERVICE_LABEL_COL_PERCENT: usize = 40;
+const DIVIDER_HEIGHT: u16 = 1;
 
 pub struct ConnectionSelector;
 
 impl ConnectionSelector {
     pub fn render(frame: &mut Frame, state: &AppState, theme: &ThemePalette) -> u16 {
+        let has_last = has_last_connection(state.connection_list_items());
         let is_service_selected = crate::app::model::connection::list::is_service_selected(
             state.connection_list_items(),
             state.ui.connection_list_selected,
         );
-        let hint = Self::build_hints(is_service_selected);
+        let hint = Self::build_hints(is_service_selected, has_last);
         let (_outer, inner) = render_modal(
             frame,
             Constraint::Percentage(60),
@@ -36,16 +39,89 @@ impl ConnectionSelector {
             theme,
         );
 
-        render_connection_list(frame, inner, state, theme)
+        if has_last {
+            Self::render_two_panel_list(frame, inner, state, theme)
+        } else {
+            render_connection_list(frame, inner, state, theme)
+        }
     }
 
-    fn build_hints(is_service_selected: bool) -> Vec<(&'static str, &'static str)> {
+    fn render_two_panel_list(
+        frame: &mut Frame,
+        area: Rect,
+        state: &AppState,
+        theme: &ThemePalette,
+    ) -> u16 {
+        let all_items = state.connection_list_items();
+        let last_conn_item = match all_items.first() {
+            Some(ConnectionListItem::LastConnection) => all_items[0].clone(),
+            _ => return area.height,
+        };
+
+        // Determine the last connection profile for display
+        let last_conn_display = if let ConnectionListItem::LastConnection = last_conn_item {
+            state
+                .last_connection_profile()
+                .map(|c| c.display_name().to_string())
+        } else {
+            None
+        };
+
+        let total_height = area.height;
+        // Reserve 1 line for the last connection, 1 for divider
+        let bottom_available = total_height.saturating_sub(DIVIDER_HEIGHT + 2);
+        let bottom_height = if bottom_available >= 2 { bottom_available } else { total_height };
+        let last_height = if total_height > bottom_height + DIVIDER_HEIGHT + 1 {
+            total_height - bottom_height - DIVIDER_HEIGHT
+        } else {
+            1
+        };
+
+        let chunks = Layout::vertical([
+            Constraint::Length(last_height),
+            Constraint::Length(DIVIDER_HEIGHT),
+            Constraint::Length(bottom_height),
+        ])
+        .split(area);
+
+        // Top panel: last connection
+        if let Some(name) = last_conn_display {
+            let last_style = Style::default()
+                .fg(theme.semantic.text.accent)
+                .add_modifier(Modifier::BOLD);
+            let line = Line::from(Span::styled(
+                format!("  Open last: {name}  "),
+                last_style,
+            ));
+            let para = Paragraph::new(line).style(Style::default().fg(theme.semantic.text.secondary));
+            frame.render_widget(para, chunks[0]);
+        }
+
+        // Divider
+        let divider_text = "────────────────────────────────────";
+        let divider_para = Paragraph::new(divider_text)
+            .style(Style::default().fg(theme.semantic.text.muted));
+        frame.render_widget(divider_para, chunks[1]);
+
+        // Bottom panel: regular connections
+        render_connection_list(frame, chunks[2], state, theme);
+        area.height
+    }
+
+    fn build_hints(
+        is_service_selected: bool,
+        has_last: bool,
+    ) -> Vec<(&'static str, &'static str)> {
         use connection_selector as cs;
 
         let mut hints = vec![cs::CONFIRM.as_hint(), cs::NEW.as_hint()];
         if !is_service_selected {
             hints.push(cs::EDIT.as_hint());
             hints.push(cs::DELETE.as_hint());
+            hints.push(cs::DUPLICATE.as_hint());
+        }
+        if has_last {
+            hints.push(("Tab/⇧Tab", "Toggle panels"));
         }
         hints.push(cs::CLOSE.as_hint());
 
@@ -131,11 +207,17 @@ pub fn render_connection_list(
     let content_width = area.width.saturating_sub(2) as usize;
     let source_label = "from pg_service.conf";
 
-    let items: Vec<ListItem> = if state.connection_list_items().is_empty() {
+    // Filter out LastConnection items (they're shown in the top panel)
+    let bottom_items: Vec<&ConnectionListItem> = state
+        .connection_list_items()
+        .iter()
+        .filter(|item| !matches!(item, ConnectionListItem::LastConnection))
+        .collect();
+
+    let items: Vec<ListItem> = if bottom_items.is_empty() {
         vec![ListItem::new(" No connections")]
     } else {
-        state
-            .connection_list_items()
+        bottom_items
             .iter()
             .map(|item| match item {
                 ConnectionListItem::Profile(i) => {
@@ -153,6 +235,7 @@ pub fn render_connection_list(
                         theme,
                     )
                 }
+                ConnectionListItem::LastConnection => ListItem::new(""),
             })
             .collect()
     };

@@ -1,6 +1,10 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectionListItem {
+    /// Top panel: last connection (if any)
+    LastConnection,
+    /// Bottom panel: regular profile connections
     Profile(usize),
+    /// Bottom panel: pg_service.conf entries
     Service(usize),
 }
 
@@ -8,11 +12,24 @@ pub fn is_service_selected(items: &[ConnectionListItem], selected: usize) -> boo
     matches!(items.get(selected), Some(ConnectionListItem::Service(_)))
 }
 
+pub fn is_last_connection_selected(items: &[ConnectionListItem], selected: usize) -> bool {
+    matches!(items.get(selected), Some(ConnectionListItem::LastConnection))
+}
+
+pub fn has_last_connection(items: &[ConnectionListItem]) -> bool {
+    matches!(items.first(), Some(ConnectionListItem::LastConnection))
+}
+
 pub fn build_connection_list(
     profile_count: usize,
     service_count: usize,
+    last_connection: bool,
 ) -> Vec<ConnectionListItem> {
     let mut items = Vec::new();
+
+    if last_connection {
+        items.push(ConnectionListItem::LastConnection);
+    }
 
     for i in 0..profile_count {
         items.push(ConnectionListItem::Profile(i));

@@ -172,11 +172,54 @@ pub(crate) async fn run(
             Ok(())
         }
 
+        Effect::DuplicateConnection { id } => {
+            let store = Arc::clone(connection_store);
+            let tx = action_tx.clone();
+
+            tokio::task::spawn_blocking(move || match store.duplicate(&id) {
+                Ok(duplicated) => {
+                    tx.blocking_send(Action::ConnectionDuplicated(duplicated.id))
+                        .ok();
+                }
+                Err(e) => {
+                    tx.blocking_send(Action::DuplicateConnectionFailed(e.into()))
+                        .ok();
+                }
+            });
+            Ok(())
+        }
+
+        Effect::UndoConnectionDelete { profile } => {
+            let store = Arc::clone(connection_store);
+            let tx = action_tx.clone();
+            let profile_clone = (*profile).clone();
+
+            tokio::task::spawn_blocking(move || match store.save(&profile_clone) {
+                Ok(()) => {
+                    tx.blocking_send(Action::ConnectionUndo(profile_clone.id.clone()))
+                        .ok();
+                }
+                Err(e) => {
+                    tx.blocking_send(Action::ConnectionDeleteFailed(e))
+                        .ok();
+                }
+            });
+            Ok(())
+        }
+
         Effect::SwitchConnection { connection_index } => {
             if let Some(profile) = state.connections().get(connection_index) {
                 let dsn = dsn_builder.build_dsn(profile);
                 let name = profile.display_name().to_string();
                 let id = profile.id.clone();
+
+                // Save as last connection for quick reconnection
+                let store = Arc::clone(connection_store);
+                let id_clone = id.clone();
+                tokio::task::spawn_blocking(move || {
+                    let _ = store.save_last_connection_id(&id_clone);
+                });
+
                 action_tx
                     .send(Action::SwitchConnection(ConnectionTarget { id, dsn, name }))
                     .await

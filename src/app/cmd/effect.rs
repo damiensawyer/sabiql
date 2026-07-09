@@ -1,5 +1,5 @@
 use crate::domain::Table;
-use crate::domain::connection::{ConnectionId, SslMode};
+use crate::domain::connection::{ConnectionId, ConnectionProfile, SslMode};
 use crate::ports::outbound::AppSettings;
 use crate::update::action::Action;
 
@@ -23,6 +23,12 @@ pub enum Effect {
     LoadConnections,
     DeleteConnection {
         id: ConnectionId,
+    },
+    DuplicateConnection {
+        id: ConnectionId,
+    },
+    UndoConnectionDelete {
+        profile: Box<ConnectionProfile>,
     },
 
     CacheInvalidate {

@@ -1,9 +1,14 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
+
+use crate::domain::connection::ConnectionProfile;
 
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeState {
     pub project_name: String,
     pub service_file_path: Option<PathBuf>,
+    /// LIFO buffer for undoing connection deletions.
+    pub connection_delete_undo: VecDeque<ConnectionProfile>,
 }
 
 impl RuntimeState {
@@ -11,6 +16,7 @@ impl RuntimeState {
         Self {
             project_name,
             service_file_path: None,
+            connection_delete_undo: VecDeque::new(),
         }
     }
 }

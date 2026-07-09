@@ -1,12 +1,13 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::app_config_file::{
     self, config_file_path, get_config_dir as app_config_dir, render_config_file, write_config_file,
 };
 use crate::app::ports::outbound::connection_store::{ConnectionStore, ConnectionStoreError};
 use crate::config::connection_config::{CURRENT_VERSION, ConfigVersionCheck, ConnectionConfigFile};
-use crate::domain::connection::{ConnectionId, ConnectionProfile};
+use crate::domain::connection::{ConnectionId, ConnectionName, ConnectionProfile};
 
 #[cfg(test)]
 use super::app_config_file::CONFIG_FILE_NAME;
@@ -25,6 +26,80 @@ impl TomlConnectionStore {
 
     pub fn with_config_dir(config_dir: PathBuf) -> Self {
         Self { config_dir }
+    }
+
+    /// Given a source profile and existing profiles, produce a new profile
+    /// with a duplicated name that uses the next available number suffix.
+    ///
+    /// Naming rules:
+    /// - "gumshoe" → "gumshoe (1)"
+    /// - "gumshoe (1)" → "gumshoe (2)"  
+    /// - "gumshoe" when "gumshoe (1)" exists → "gumshoe (2)" etc.
+    fn make_duplicated_name(source: &ConnectionProfile, existing: &[ConnectionProfile]) -> ConnectionProfile {
+        let source_name = source.display_name();
+        let (base_name, _) = Self::parse_name_suffix(source_name);
+
+        // Gather all numbers used by connections with this base name
+        let all_numbers = Self::gather_suffix_numbers(existing, &base_name);
+        let max_existing = all_numbers.iter().max().copied().unwrap_or(0);
+
+        // Start from the next number after the max
+        let mut next_num = if all_numbers.is_empty() { 1 } else { max_existing + 1 };
+
+        // Check that this number doesn't already exist, increment if it does
+        while Self::has_name_with_number_suffix(existing, &base_name, next_num) {
+            next_num += 1;
+        }
+
+        let new_name = format!("{base_name} ({next_num})");
+        ConnectionProfile {
+            id: source.id.clone(), // temporary, will be replaced
+            name: ConnectionName::new(new_name).unwrap(),
+            host: source.host.clone(),
+            port: source.port,
+            database: source.database.clone(),
+            username: source.username.clone(),
+            password: source.password.clone(),
+            ssl_mode: source.ssl_mode,
+        }
+    }
+
+    /// Parse a connection name to extract the base name and any number suffix.
+    /// e.g. "gumshoe (17)" → ("gumshoe", vec![17])
+    ///      "gumshoe" → ("gumshoe", vec![])
+    fn parse_name_suffix(name: &str) -> (String, Vec<usize>) {
+        // Look for a suffix like " (N)" at the end
+        if let Some(paren_pos) = name.rfind(" (") {
+            let after_space = &name[paren_pos + 2..];
+            if after_space.ends_with(')') && after_space.len() > 1 {
+                let num_str = &after_space[..after_space.len() - 1];
+                if let Ok(num) = num_str.parse::<usize>() {
+                    let base = name[..paren_pos].to_string();
+                    return (base, vec![num]);
+                }
+            }
+        }
+        (name.to_string(), vec![])
+    }
+
+    /// Gather all numbers from profiles whose base name matches.
+    fn gather_suffix_numbers(profiles: &[ConnectionProfile], base: &str) -> Vec<usize> {
+        profiles
+            .iter()
+            .filter_map(|p| {
+                let (b, nums) = Self::parse_name_suffix(p.display_name());
+                if b == base {
+                    nums.into_iter().next()
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn has_name_with_number_suffix(profiles: &[ConnectionProfile], base: &str, num: usize) -> bool {
+        let expected = format!("{base} ({num})");
+        profiles.iter().any(|p| p.display_name() == expected)
     }
 
     fn config_file_path(&self) -> PathBuf {
@@ -123,8 +198,56 @@ impl ConnectionStore for TomlConnectionStore {
         self.write_all(&profiles)
     }
 
+    fn duplicate(
+        &self,
+        id: &ConnectionId,
+    ) -> Result<ConnectionProfile, ConnectionStoreError> {
+        let _guard = app_config_file::lock();
+        let profiles = self.load_all()?;
+
+        let source = profiles
+            .iter()
+            .find(|p| &p.id == id)
+            .ok_or_else(|| ConnectionStoreError::NotFound(id.to_string()))?;
+
+        let new_profile = Self::make_duplicated_name(source, &profiles);
+        let new_id = crate::domain::connection::ConnectionId::new();
+
+        let final_profile = ConnectionProfile::with_id(
+            new_id,
+            new_profile.name.as_str(),
+            new_profile.host.clone(),
+            new_profile.port,
+            new_profile.database.clone(),
+            new_profile.username.clone(),
+            new_profile.password.clone(),
+            new_profile.ssl_mode,
+        ).map_err(|e| ConnectionStoreError::InvalidProfile(e.into()))?;
+
+        let mut all_profiles = profiles;
+        all_profiles.push(final_profile.clone());
+        self.write_all(&all_profiles)?;
+
+        Ok(final_profile)
+    }
+
     fn storage_path(&self) -> PathBuf {
         self.config_file_path()
+    }
+
+    fn save_last_connection_id(&self, id: &ConnectionId) -> Result<(), ConnectionStoreError> {
+        let path = app_config_file::last_connection_file_path(&self.config_dir);
+        // Write to a temp file first for atomicity
+        let tmp_path = path.with_extension(format!("{}.tmp", id.as_str()));
+        if let Err(e) = fs::write(&tmp_path, id.as_str()) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(ConnectionStoreError::Io(Arc::new(e)));
+        }
+        if let Err(e) = fs::rename(&tmp_path, &path) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(ConnectionStoreError::Io(Arc::new(e)));
+        }
+        Ok(())
     }
 }
 

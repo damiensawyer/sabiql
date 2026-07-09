@@ -43,6 +43,9 @@ use sabiql_infra::adapters::{
     ArboardClipboard, FileConfigWriter, FileQueryHistoryStore, FsErLogWriter, NativeFolderOpener,
     PgServiceFileReader, PostgresAdapter, TomlConnectionStore, TomlSettingsStore,
 };
+use sabiql_infra::adapters::app_config_file::{
+    get_config_dir, read_last_connection_id,
+};
 use sabiql_infra::config::project_root::{find_project_root, get_project_name};
 use sabiql_infra::export::DotExporter;
 use sabiql_ui::adapters::TuiAdapter;
@@ -150,6 +153,12 @@ async fn main() -> Result<()> {
         .load_keymap_preset(app_settings.keymap_preset);
     state.settings.load_er_browser(app_settings.er_browser);
 
+    // Try to load the last connection ID
+    let config_dir = get_config_dir().ok();
+    let last_conn_id = config_dir
+        .as_ref()
+        .and_then(|d| read_last_connection_id(d).ok().flatten());
+
     match all_profiles {
         Ok(profiles) if profiles.is_empty() => {
             load_service_entries(&mut state, Some(&*pg_service_entry_reader));
@@ -169,6 +178,13 @@ async fn main() -> Result<()> {
             });
             state.set_connections(profiles);
             load_service_entries(&mut state, Some(&*pg_service_entry_reader));
+
+            // Set the last connection ID if it exists and is still valid
+            if let Some(ref id_str) = last_conn_id {
+                use sabiql_app::domain::connection::ConnectionId;
+                let id = ConnectionId::from_string(id_str.as_str());
+                state.set_last_connection_id(Some(id));
+            }
 
             state.modal.set_mode(InputMode::ConnectionSelector);
             state.ui.set_connection_list_selection(Some(0));

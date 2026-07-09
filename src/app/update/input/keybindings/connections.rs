@@ -237,6 +237,22 @@ pub mod connection_selector {
         }],
     };
 
+    pub const TOGGLE_PANELS: ModeRow = ModeRow {
+        key_short: "Tab",
+        key: "Tab",
+        desc_short: "Toggle panels",
+        description: "Toggle between last connection and rest of list",
+        bindings: &[
+            ExecBinding {
+                action: Action::ListSelect {
+                    target: ListTarget::ConnectionList,
+                    motion: ListMotion::Next,
+                },
+                combos: &[KeyCombo::plain(Key::Tab)],
+            },
+        ],
+    };
+
     pub const SELECT: ModeRow = ModeRow {
         key_short: "^N/^P/↑↓",
         key: "Ctrl+N / Ctrl+P / ↑ / ↓ / j / k",
@@ -301,6 +317,17 @@ pub mod connection_selector {
         }],
     };
 
+    pub const DUPLICATE: ModeRow = ModeRow {
+        key_short: "D",
+        key: "D",
+        desc_short: "Duplicate",
+        description: "Duplicate connection",
+        bindings: &[ExecBinding {
+            action: Action::RequestDuplicateSelectedConnection,
+            combos: &[KeyCombo::plain(Key::Char('D'))],
+        }],
+    };
+
     pub const CLOSE: ModeRow = ModeRow {
         key_short: "Esc",
         key: "Esc",
@@ -314,10 +341,12 @@ pub mod connection_selector {
 }
 
 pub const CONNECTION_SELECTOR_ROWS: &[ModeRow] = &[
+    connection_selector::TOGGLE_PANELS,
     connection_selector::CONFIRM,
     connection_selector::SELECT,
     connection_selector::NEW,
     connection_selector::EDIT,
     connection_selector::DELETE,
+    connection_selector::DUPLICATE,
     connection_selector::CLOSE,
 ];

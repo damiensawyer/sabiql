@@ -35,8 +35,9 @@ pub(super) fn reduce_confirm_dialog(
                     state.should_quit = true;
                     DispatchResult::handled()
                 }
-                Some(ConfirmIntent::DeleteConnection(id)) => {
-                    DispatchResult::handled_with(vec![Effect::DeleteConnection { id }])
+                Some(ConfirmIntent::DeleteConnection(_)) => {
+                    // Delete is now immediate; this branch shouldn't be reached.
+                    DispatchResult::handled()
                 }
                 Some(ConfirmIntent::ExecuteWrite { blocked: true, .. }) => {
                     state.result_interaction.clear_write_preview();

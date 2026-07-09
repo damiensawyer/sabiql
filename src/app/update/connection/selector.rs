@@ -18,7 +18,7 @@ pub(super) fn reduce_connection_selector(
             DispatchResult::handled_with(vec![Effect::LoadConnections])
         }
 
-        // ===== Connection Deletion =====
+        // ===== Connection Deletion (immediate, no confirm) =====
         Action::RequestDeleteSelectedConnection => {
             use crate::model::connection::list::ConnectionListItem;
             let selected_idx = state.ui.connection_list_selected;
@@ -28,24 +28,25 @@ pub(super) fn reduce_connection_selector(
             };
             if let Some(connection) = state.connections().get(profile_idx) {
                 let id = connection.id.clone();
-                let name = connection.name.as_str().to_string();
                 let is_active = state.session.active_connection_id.as_ref() == Some(&id);
 
-                let message = if is_active {
-                    format!(
-                        "Delete \"{name}\"?\n\n\u{26A0} This is the active connection.\nYou will be disconnected.\n\nThis action cannot be undone."
-                    )
-                } else {
-                    format!("Delete \"{name}\"?\n\nThis action cannot be undone.")
-                };
-                state.confirm_dialog.open(
-                    "Delete Connection",
-                    message,
-                    crate::model::shared::confirm_dialog::ConfirmIntent::DeleteConnection(id),
-                );
-                state.modal.push_mode(InputMode::ConfirmDialog);
+                if is_active {
+                    // Can't delete active connection - show error
+                    state
+                        .messages
+                        .set_error_at("Cannot delete the active connection".to_string(), now);
+                    return DispatchResult::handled();
+                }
+
+                // Push to undo buffer before deleting
+                if let Some(profile) = state.connections().get(profile_idx).cloned() {
+                    state.push_connection_delete_undo(profile);
+                }
+
+                DispatchResult::handled_with(vec![Effect::DeleteConnection { id }])
+            } else {
+                DispatchResult::handled()
             }
-            DispatchResult::handled()
         }
         Action::DeleteConnection(id) => {
             DispatchResult::handled_with(vec![Effect::DeleteConnection { id: id.clone() }])
@@ -76,6 +77,50 @@ pub(super) fn reduce_connection_selector(
                 .messages
                 .set_success_at("Connection deleted".to_string(), now);
             DispatchResult::handled()
+        }
+
+        // ===== Connection Duplication =====
+        Action::RequestDuplicateSelectedConnection => {
+            use crate::model::connection::list::ConnectionListItem;
+            let selected_idx = state.ui.connection_list_selected;
+            let profile_idx = match state.connection_list_items().get(selected_idx) {
+                Some(ConnectionListItem::Profile(i)) => *i,
+                _ => return DispatchResult::handled(),
+            };
+            if let Some(connection) = state.connections().get(profile_idx) {
+                let id = connection.id.clone();
+                DispatchResult::handled_with(vec![Effect::DuplicateConnection { id }])
+            } else {
+                DispatchResult::handled()
+            }
+        }
+        Action::ConnectionDuplicated(_new_id) => {
+            state
+                .messages
+                .set_success_at("Connection duplicated".to_string(), now);
+            DispatchResult::handled_with(vec![Effect::LoadConnections])
+        }
+        Action::DuplicateConnectionFailed(e) => {
+            state.messages.set_error_at(e.to_string(), now);
+            DispatchResult::handled()
+        }
+
+        // ===== Connection Undo =====
+        Action::RequestUndoConnectionDelete => {
+            if let Some(profile) = state.pop_connection_delete_undo() {
+                let _id = profile.id.clone();
+                DispatchResult::handled_with(vec![Effect::UndoConnectionDelete {
+                    profile: Box::new(profile),
+                }])
+            } else {
+                DispatchResult::handled()
+            }
+        }
+        Action::ConnectionUndo(_id) => {
+            state
+                .messages
+                .set_success_at("Connection restored".to_string(), now);
+            DispatchResult::handled_with(vec![Effect::LoadConnections])
         }
         Action::ConnectionDeleteFailed(e) => {
             state.messages.set_error_at(e.to_string(), now);

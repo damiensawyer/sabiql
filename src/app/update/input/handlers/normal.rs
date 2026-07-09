@@ -138,6 +138,11 @@ pub fn handle_normal_mode(combo: KeyCombo, state: &AppState) -> Action {
 
         Key::Char('z') => Action::BeginKeySequence(Prefix::Z),
 
+        // Undo connection delete (uppercase U, only when undo buffer not empty)
+        Key::Char('U') if state.has_connection_delete_undo() => {
+            Action::RequestUndoConnectionDelete
+        }
+
         _ => Action::None,
     }
 }

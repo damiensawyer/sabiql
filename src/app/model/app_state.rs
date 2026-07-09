@@ -51,6 +51,7 @@ pub struct AppState {
     pub modal: ModalState,
     pub flash_timers: FlashTimerStore,
     pub connection_caches: ConnectionCacheStore,
+    last_connection_id: Option<crate::domain::connection::ConnectionId>,
     connections: Vec<ConnectionProfile>,
     service_entries: Vec<ServiceEntry>,
     connection_list_items: Vec<ConnectionListItem>,
@@ -82,6 +83,7 @@ impl AppState {
             modal: ModalState::default(),
             flash_timers: FlashTimerStore::default(),
             connection_caches: ConnectionCacheStore::default(),
+            last_connection_id: None,
             connections: Vec::new(),
             service_entries: Vec::new(),
             connection_list_items: Vec::new(),
@@ -275,10 +277,59 @@ impl AppState {
     }
 
     fn rebuild_connection_list(&mut self) {
+        let show_last = self.last_connection_profile().is_some();
         self.connection_list_items = crate::model::connection::list::build_connection_list(
             self.connections.len(),
             self.service_entries.len(),
+            show_last,
         );
+    }
+
+    /// Get the profile index of the last connection, or None if not available.
+    /// Returns Some(index into connections()) if the last connection is in the profile list.
+    pub fn last_connection_profile_index(&self) -> Option<usize> {
+        self.last_connection_profile().map(|lc| {
+            self.connections
+                .iter()
+                .position(|c| &c.id == &lc.id)
+                .unwrap()
+        })
+    }
+
+    // --- Last connection ---
+
+    pub fn last_connection_id(&self) -> Option<&crate::domain::connection::ConnectionId> {
+        self.last_connection_id.as_ref()
+    }
+
+    pub fn set_last_connection_id(&mut self, id: Option<crate::domain::connection::ConnectionId>) {
+        self.last_connection_id = id;
+        self.rebuild_connection_list();
+    }
+
+    /// Returns the last connection profile if it's still in the current connections list.
+    pub fn last_connection_profile(&self) -> Option<&ConnectionProfile> {
+        self.last_connection_id.as_ref().and_then(|id| {
+            self.connections.iter().find(|c| &c.id == id)
+        })
+    }
+
+    // --- Undo buffer ---
+
+    pub fn push_connection_delete_undo(&mut self, profile: ConnectionProfile) {
+        // Keep a reasonable limit to avoid memory issues
+        if self.runtime.connection_delete_undo.len() >= 50 {
+            self.runtime.connection_delete_undo.pop_front();
+        }
+        self.runtime.connection_delete_undo.push_back(profile);
+    }
+
+    pub fn pop_connection_delete_undo(&mut self) -> Option<ConnectionProfile> {
+        self.runtime.connection_delete_undo.pop_back()
+    }
+
+    pub fn has_connection_delete_undo(&self) -> bool {
+        !self.runtime.connection_delete_undo.is_empty()
     }
 
     pub fn toggle_focus(&mut self) -> bool {
