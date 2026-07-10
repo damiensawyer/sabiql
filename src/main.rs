@@ -152,6 +152,8 @@ async fn main() -> Result<()> {
         .settings
         .load_keymap_preset(app_settings.keymap_preset);
     state.settings.load_er_browser(app_settings.er_browser);
+    state.settings.load_low_scroll(app_settings.low_scroll);
+    state.ui.low_scroll = app_settings.low_scroll;
 
     // Try to load the last connection ID
     let config_dir = get_config_dir().ok();

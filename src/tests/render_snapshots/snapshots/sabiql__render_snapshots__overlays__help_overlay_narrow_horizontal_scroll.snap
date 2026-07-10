@@ -5,22 +5,22 @@ expression: output
 test_project | test_db | - | no dsn | localhost:54
 ┌ [1] Explor┐[Info] [Cols] [Idx] [FK] [RLS] [Trig]
 │> publi╭ Help ───────────────────────────╮──────┐
-│  publi│                             Ret▲│      │
-│  publi│                             Mov││      │
+│  publi│                             Ope▲│      │
+│  publi│                             Ret││      │
+│       │                             Mov││      │
 │       │                             Lin││      │
 │       │                             Ins││      │
 │       │                             Pre││      │
-│       │                             Edi││      │
+│       │                             Edi┃│      │
 │       │                             Mov┃│      │
-│       │                             Jum┃│      │
-│       │                             Ope││──────┘
-│       │                             Exi││──────┐
+│       │                             Jum││──────┘
+│       │                             Ope││──────┐
+│       │                             Exi││      │
 │       │                             Lin││      │
 │       │                             Exe││      │
 │       │                             Can││      │
 │       │                                ││      │
 │       │                                ││      │
-│       │                             Typ││      │
 │       │                             Typ▼│      │
 │       │ x  23% ◀︎────═════─────────────▶︎ │      │
 └───────╰ type: Filter │ Backspace: Edit │╯──────┘

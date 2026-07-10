@@ -63,6 +63,7 @@ pub enum ScrollTarget {
     Explorer,
     JsonbDetail,
     RowDetail,
+    Cell,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,6 +350,7 @@ pub enum Action {
     SettingsPreviousSection,
     SettingsStartCustomBrowserEdit,
     SettingsStopCustomBrowserEdit,
+    SettingsToggleLowScrollScroll,
     SettingsApply,
     SettingsCancel,
     SettingsSaved(AppSettings),
@@ -524,6 +526,7 @@ pub enum Action {
     OpenFolderFailed(FolderOpenError),
     ToggleFocus,
     ToggleReadOnly,
+    ToggleLowScroll,
 
     // Query history
     QueryHistoryLoaded(
