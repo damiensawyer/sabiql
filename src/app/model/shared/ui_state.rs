@@ -259,6 +259,7 @@ impl UiState {
             LowScrollSettings {
                 allow_horizontal_scroll: true,
                 max_lines_per_row: self.low_scroll.max_lines_per_row,
+                format_json: self.low_scroll.format_json,
             }
         }
     }

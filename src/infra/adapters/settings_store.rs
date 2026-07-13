@@ -91,6 +91,7 @@ impl SettingsStore for TomlSettingsStore {
                 er_browser: None,
                 low_scroll_allow_horizontal_scroll: None,
                 low_scroll_max_lines_per_row: None,
+                low_scroll_format_json: None,
                 connections: vec![],
             });
         set_app_settings(&mut config, settings);
@@ -122,6 +123,7 @@ fn app_settings(config: ConnectionConfigFile) -> AppSettings {
         low_scroll: LowScrollSettings {
             allow_horizontal_scroll: config.low_scroll_allow_horizontal_scroll.unwrap_or(false),
             max_lines_per_row: config.low_scroll_max_lines_per_row.filter(|&n| n > 0),
+            format_json: config.low_scroll_format_json.unwrap_or(false),
         },
     }
 }
@@ -132,6 +134,7 @@ fn set_app_settings(config: &mut ConnectionConfigFile, settings: AppSettings) {
     config.er_browser = settings.er_browser;
     config.low_scroll_allow_horizontal_scroll = Some(settings.low_scroll.allow_horizontal_scroll);
     config.low_scroll_max_lines_per_row = settings.low_scroll.max_lines_per_row;
+    config.low_scroll_format_json = Some(settings.low_scroll.format_json);
 }
 
 #[cfg(test)]

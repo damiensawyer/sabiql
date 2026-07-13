@@ -11,6 +11,7 @@ use crate::primitives::atoms::{panel_block_highlight, text_cursor_spans};
 
 use crate::app::model::app_state::AppState;
 use crate::app::model::shared::focused_pane::FocusedPane;
+use crate::app::model::shared::json_format;
 use crate::app::model::shared::low_scroll::{self as low_scroll_layout, LowScrollSettings};
 use crate::app::model::shared::ui_state::{RESULT_INNER_OVERHEAD, ResultSelection, YankFlash};
 use crate::app::model::shared::viewport::{
@@ -232,15 +233,18 @@ impl ResultPane {
         let cached = stored_cache.is_valid(result_generation);
         let fresh_ideal;
         let fresh_min;
-        let (ideal_widths, min_widths) = if cached {
+        let fresh_json;
+        let (ideal_widths, min_widths, json_columns) = if cached {
             (
                 &stored_cache.ideal_widths[..],
                 &stored_cache.header_min_widths[..],
+                &stored_cache.json_columns[..],
             )
         } else {
             fresh_ideal = calculate_ideal_widths(&result.columns, &result.rows);
             fresh_min = calculate_header_min_widths(&result.columns);
-            (&fresh_ideal[..], &fresh_min[..])
+            fresh_json = json_format::detect_json_columns(&result.rows, result.columns.len());
+            (&fresh_ideal[..], &fresh_min[..], &fresh_json[..])
         };
 
         let fingerprint = widths_fingerprint(ideal_widths, min_widths);
@@ -256,8 +260,24 @@ impl ResultPane {
             ColumnWidthsCache::new(
                 ideal_widths.to_vec(),
                 min_widths.to_vec(),
+                json_columns.to_vec(),
                 result_generation,
             )
+        };
+
+        // Build the display rows for Low Scroll Mode. When "Format JSON" is on
+        // and the result has detected JSON columns, those columns are
+        // pretty-printed here so that width sizing, row-height measurement,
+        // and cell rendering all see the same formatted text. Otherwise the
+        // raw rows are used directly (no allocation).
+        let format_json = low_scroll_enabled && low_scroll.format_json;
+        let has_json = format_json && json_columns.iter().any(|&j| j);
+        let formatted_display_rows;
+        let display_rows: &[Vec<String>] = if has_json {
+            formatted_display_rows = format_display_rows(&result.rows, json_columns);
+            &formatted_display_rows
+        } else {
+            &result.rows
         };
 
         // Low Scroll Mode: when enabled and the result would overflow
@@ -270,9 +290,10 @@ impl ResultPane {
         // widest line overall — otherwise multi-line content whose first line
         // is short (e.g. `jsonb_pretty()` output starting with `{`) gets
         // squeezed into a near-zero-width column instead of one sized to fit
-        // its actual content.
+        // its actual content. The formatted `display_rows` are used so JSON
+        // columns are measured at their pretty-printed width.
         let low_scroll_ideal_widths = low_scroll_enabled
-            .then(|| calculate_low_scroll_ideal_widths(&result.columns, &result.rows));
+            .then(|| calculate_low_scroll_ideal_widths(&result.columns, display_rows));
         let low_scroll_widths = low_scroll_ideal_widths.as_deref().unwrap_or(ideal_widths);
 
         // Low Scroll Mode, once toggled on (`L`), always wraps multi-line cell
@@ -299,6 +320,7 @@ impl ResultPane {
                     frame,
                     inner,
                     result,
+                    display_rows,
                     low_scroll_widths,
                     min_widths,
                     horizontal_offset,
@@ -319,6 +341,7 @@ impl ResultPane {
                     frame,
                     inner,
                     result,
+                    display_rows,
                     low_scroll_widths,
                     effective,
                     scroll_offset,
@@ -539,6 +562,7 @@ impl ResultPane {
         frame: &mut Frame,
         inner: Rect,
         result: &QueryResult,
+        rows: &[Vec<String>],
         ideal_widths: &[u16],
         settings: LowScrollSettings,
         scroll_offset: usize,
@@ -556,9 +580,14 @@ impl ResultPane {
         usize,
         low_scroll_layout::MeasuredLowScrollLayout,
     ) {
-        // Column widths are cheap (one pass over the columns); only the per-row
-        // heights are O(rows), so those are what the cache reuses.
-        let column_widths = low_scroll_layout::shrink_columns_to_fit(ideal_widths, inner.width);
+        let layout = low_scroll_layout::compute_layout(
+            &result.columns,
+            rows,
+            ideal_widths,
+            inner.width,
+            &settings,
+            PADDING,
+        );
 
         // Per-row line heights for every row, handed back to the scroll reducer
         // so it can keep the selected row on screen with line-based math. Reused
@@ -641,8 +670,9 @@ impl ResultPane {
                     None
                 };
 
-                let row_data = &result.rows[abs_row_idx];
-                let cells: Vec<Cell> = column_widths
+                let row_data = &rows[abs_row_idx];
+                let cells: Vec<Cell> = layout
+                    .columns
                     .iter()
                     .enumerate()
                     .map(|(col_idx, &col_width)| {
@@ -665,6 +695,7 @@ impl ResultPane {
                                     val,
                                     col_width,
                                     settings.max_lines_per_row,
+                                    line_budget,
                                     cell_vertical_offset,
                                 );
                                 corrected_cell_vertical_offset = clamped;
@@ -751,6 +782,7 @@ impl ResultPane {
         frame: &mut Frame,
         inner: Rect,
         result: &QueryResult,
+        rows: &[Vec<String>],
         ideal_widths: &[u16],
         min_widths: &[u16],
         horizontal_offset: usize,
@@ -775,24 +807,22 @@ impl ResultPane {
 
         // Per-row line heights for every row (computed against the natural
         // widths every column keeps in this path), handed back to the scroll
-        // reducer for line-based visibility math. Reused across frames when the
-        // layout key is unchanged so scrolling never re-measures every row.
-        let measured_layout = measured_low_scroll_layout(stored_low_scroll, key, || {
-            result
-                .rows
-                .iter()
-                .map(|row| {
-                    low_scroll_layout::row_layout(
-                        row,
-                        ideal_widths,
-                        PADDING,
-                        settings.max_lines_per_row,
-                    )
-                    .height
-                })
-                .collect()
-        });
-        let row_heights = &measured_layout.row_heights;
+        // reducer for line-based visibility math.
+        let row_heights: Vec<u16> = rows
+            .iter()
+            .map(|row| {
+                low_scroll_layout::row_layout(
+                    row,
+                    ideal_widths,
+                    PADDING,
+                    settings.max_lines_per_row,
+                )
+                .height
+            })
+            .collect();
+        let measured_layout = low_scroll_layout::MeasuredLowScrollLayout {
+            row_heights: row_heights.clone(),
+        };
 
         let config = ColumnWidthConfig {
             ideal_widths,
@@ -872,7 +902,7 @@ impl ResultPane {
                     None
                 };
 
-                let row_data = &result.rows[abs_row_idx];
+                let row_data = &rows[abs_row_idx];
                 let cells: Vec<Cell> = viewport_indices
                     .iter()
                     .zip(viewport_widths.iter())
@@ -908,6 +938,7 @@ impl ResultPane {
                                     val,
                                     col_width,
                                     settings.max_lines_per_row,
+                                    line_budget,
                                     cell_vertical_offset,
                                 );
                                 corrected_cell_vertical_offset = clamped;
@@ -1055,6 +1086,29 @@ pub(crate) fn calculate_ideal_widths(headers: &[String], rows: &[Vec<String>]) -
         .collect()
 }
 
+/// Build a display copy of `rows` with detected JSON columns pretty-printed.
+/// Non-JSON columns are cloned through unchanged. Only call this when there
+/// is at least one JSON column and "Format JSON" is enabled.
+///
+/// `col_widths` are the ideal column widths (in characters, without padding);
+/// JSON that fits compactly within the column width is left on one line.
+fn format_display_rows(rows: &[Vec<String>], json_columns: &[bool]) -> Vec<Vec<String>> {
+    rows.iter()
+        .map(|row| {
+            row.iter()
+                .enumerate()
+                .map(|(col, cell)| {
+                    if json_columns.get(col).copied().unwrap_or(false) {
+                        json_format::pretty_format_json(cell, 0)
+                    } else {
+                        cell.clone()
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// Like `calculate_ideal_widths`, but sizes each column by the widest *line*
 /// across the whole cell rather than just the first line. Low Scroll Mode
 /// wraps and displays every line, so its width budgeting needs to reflect the
@@ -1099,6 +1153,7 @@ fn effective_low_scroll(settings: LowScrollSettings, enabled: bool) -> LowScroll
         LowScrollSettings {
             allow_horizontal_scroll: true,
             max_lines_per_row: settings.max_lines_per_row,
+            format_json: settings.format_json,
         }
     }
 }
@@ -1126,18 +1181,27 @@ fn measured_low_scroll_layout(
 
 /// The number of additional wrapped lines available below `cell_vertical_offset`
 /// for the active cell, clamped to what the cell's content actually has (0 when
-/// the cap doesn't truncate it, since there is nothing to scroll into).
+/// the visible window already shows all content).
+///
+/// When `max_lines_per_row` is `None` the pane height (`line_budget`) is used
+/// as the effective window size so that content overflowing the screen can still
+/// be scrolled into.
 fn clamp_cell_vertical_offset(
     text: &str,
     col_width: u16,
     max_lines_per_row: Option<u16>,
+    line_budget: usize,
     offset: usize,
 ) -> usize {
-    let Some(cap) = max_lines_per_row else {
-        return 0;
+    let cap = match max_lines_per_row {
+        Some(c) => c as usize,
+        None => line_budget,
     };
+    if cap == 0 {
+        return 0;
+    }
     let total = LowScrollSettings::wrapped_cell_lines(text, col_width, PADDING) as usize;
-    offset.min(total.saturating_sub(cap as usize))
+    offset.min(total.saturating_sub(cap))
 }
 
 /// Wrap a cell's text into ratatui lines for Low Scroll Mode, applying the
@@ -1442,7 +1506,7 @@ mod tests {
         // Cached: is_valid check + clone (actual cache-hit path)
         let ideal = calculate_ideal_widths(&headers, &data);
         let min = calculate_header_min_widths(&headers);
-        let cache = ColumnWidthsCache::new(ideal, min, 1);
+        let cache = ColumnWidthsCache::new(ideal, min, vec![], 1);
         let start = Instant::now();
         for _ in 0..iterations {
             let valid = std::hint::black_box(cache.is_valid(1));
@@ -1487,15 +1551,24 @@ mod tests {
         }
 
         #[test]
-        fn clamp_offset_is_zero_when_no_cap() {
-            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd", 10, None, 5);
+        fn clamp_offset_is_zero_when_no_cap_and_fits_in_budget() {
+            // 4 lines, line_budget=10 -> no overflow, offset clamped to 0
+            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd", 10, None, 10, 5);
 
             assert_eq!(clamped, 0);
         }
 
         #[test]
+        fn clamp_offset_uses_line_budget_when_no_cap() {
+            // 4 lines, line_budget=2 -> 2 lines of overflow; offset=5 clamped to 2
+            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd", 10, None, 2, 5);
+
+            assert_eq!(clamped, 2);
+        }
+
+        #[test]
         fn clamp_offset_is_zero_when_cell_not_truncated() {
-            let clamped = clamp_cell_vertical_offset("a\nb", 10, Some(5), 5);
+            let clamped = clamp_cell_vertical_offset("a\nb", 10, Some(5), 20, 5);
 
             assert_eq!(clamped, 0);
         }
@@ -1503,14 +1576,14 @@ mod tests {
         #[test]
         fn clamp_offset_caps_at_overflow_amount() {
             // 5 wrapped lines, cap 2 -> 3 lines of overflow to scroll into.
-            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd\ne", 10, Some(2), 100);
+            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd\ne", 10, Some(2), 20, 100);
 
             assert_eq!(clamped, 3);
         }
 
         #[test]
         fn clamp_offset_passes_through_when_within_range() {
-            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd\ne", 10, Some(2), 1);
+            let clamped = clamp_cell_vertical_offset("a\nb\nc\nd\ne", 10, Some(2), 20, 1);
 
             assert_eq!(clamped, 1);
         }

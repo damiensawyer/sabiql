@@ -71,6 +71,10 @@ pub fn wrapped_line_count(text: &str, width: u16) -> u16 {
 /// fill the cell predictably. Each returned line is at most `width` display
 /// cells wide.
 ///
+/// Lines that look like a JSON key-value pair (`    "key": value`) get a
+/// hanging indent: continuation lines are padded to align the wrapped value
+/// under the character after `": `. Non-JSON lines behave as before (hang=0).
+///
 /// Returns at least one line per input so the cell always occupies a row even
 /// when empty.
 #[must_use]
@@ -84,6 +88,11 @@ pub fn wrap_text_lines(text: &str, width: u16) -> Vec<String> {
 
     let mut out = Vec::new();
     for line in text.split('\n') {
+        let raw_hang = json_key_value_hang(line);
+        // Don't hang if it would leave no room for content.
+        let hang = if raw_hang + 2 > width { 0 } else { raw_hang };
+        let hang_str = " ".repeat(hang);
+
         let mut current = String::new();
         let mut used = 0usize;
 
@@ -91,7 +100,10 @@ pub fn wrap_text_lines(text: &str, width: u16) -> Vec<String> {
             let w = UnicodeWidthChar::width(ch).unwrap_or(0);
             if used + w > width && !current.is_empty() {
                 out.push(std::mem::take(&mut current));
-                used = 0;
+                // Pre-fill the continuation line with the hanging indent so
+                // subsequent characters land under the value, not col 0.
+                current.push_str(&hang_str);
+                used = hang;
             }
             current.push(ch);
             used += w;
@@ -104,6 +116,55 @@ pub fn wrap_text_lines(text: &str, width: u16) -> Vec<String> {
         out.push(String::new());
     }
     out
+}
+
+/// Return the display-column index of the value start for a JSON key-value
+/// line of the form `<spaces>"key": <value>`, or 0 if the line doesn't match.
+///
+/// This is used as the hanging indent width so that wrapped value text aligns
+/// under the character after `": ` rather than col 0.
+fn json_key_value_hang(line: &str) -> usize {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+
+    // Leading spaces only (serde_json pretty-prints with ASCII spaces).
+    while i < bytes.len() && bytes[i] == b' ' {
+        i += 1;
+    }
+    let leading = i;
+
+    // Opening quote of the key.
+    if bytes.get(i) != Some(&b'"') {
+        return 0;
+    }
+    i += 1;
+
+    // Scan through the key, respecting backslash escapes.
+    loop {
+        match bytes.get(i) {
+            Some(&b'\\') => i += 2,
+            Some(&b'"') => {
+                i += 1;
+                break;
+            }
+            Some(_) => i += 1,
+            None => return 0,
+        }
+    }
+
+    // Must be followed by `: ` (colon + space).
+    if bytes.get(i..i + 2) != Some(b": ") {
+        return 0;
+    }
+    i += 2;
+
+    // Sanity: the hang column must be greater than the leading indent,
+    // otherwise we detected something degenerate.
+    if i <= leading {
+        return 0;
+    }
+
+    i
 }
 
 #[cfg(test)]
@@ -277,6 +338,77 @@ mod tests {
 
             // each CJK char is 2 cells: "あい" (4) | "う" (2)
             assert_eq!(lines, vec!["あい".to_string(), "う".to_string()]);
+        }
+
+        #[test]
+        fn json_key_value_continuation_hangs_under_value() {
+            // `    "key": abcdefgh` with width=16.
+            // Compact form is 18 chars; first 16 fit, then continuation should
+            // hang under the value (position 11: 4 spaces + `"key": `).
+            let line = "    \"key\": abcdefgh";
+            let lines = wrap_text_lines(line, 16);
+            // First line: `    "key": abcde` (16 chars)
+            // Continuation: 11 spaces + `fgh`
+            assert_eq!(lines[0], "    \"key\": abcde");
+            assert_eq!(lines[1], "           fgh");
+        }
+
+        #[test]
+        fn plain_text_no_hang() {
+            // A line without the JSON key pattern wraps without hanging indent.
+            let lines = wrap_text_lines("abcde fghij", 5);
+            assert_eq!(lines, vec!["abcde".to_string(), " fghi".to_string(), "j".to_string()]);
+        }
+
+        #[rstest]
+        #[case(r#"    "key": long"#, 14)]
+        #[case(r#"        "nested": long"#, 20)]
+        fn json_hang_lines_within_width(#[case] text: &str, #[case] width: u16) {
+            let lines = wrap_text_lines(text, width);
+            for line in &lines {
+                assert!(
+                    UnicodeWidthStr::width(line.as_str()) <= width as usize,
+                    "line {:?} exceeds width {}",
+                    line,
+                    width
+                );
+            }
+        }
+    }
+
+    mod json_key_value_hang_tests {
+        use super::super::json_key_value_hang;
+
+        #[test]
+        fn detects_simple_key() {
+            assert_eq!(json_key_value_hang(r#"    "key": value"#), 11);
+        }
+
+        #[test]
+        fn detects_nested_indent() {
+            assert_eq!(json_key_value_hang(r#"        "deep": value"#), 16);
+        }
+
+        #[test]
+        fn no_hang_for_plain_text() {
+            assert_eq!(json_key_value_hang("hello world"), 0);
+        }
+
+        #[test]
+        fn no_hang_for_object_open() {
+            assert_eq!(json_key_value_hang(r#"    "obj": {"#), 11);
+        }
+
+        #[test]
+        fn handles_escaped_quote_in_key() {
+            // Key contains `\"` — hang should still land after `: `.
+            assert_eq!(json_key_value_hang(r#"    "a\"b": value"#), 12);
+        }
+
+        #[test]
+        fn no_hang_for_array_delimiter() {
+            assert_eq!(json_key_value_hang("{"), 0);
+            assert_eq!(json_key_value_hang("}"), 0);
         }
     }
 }

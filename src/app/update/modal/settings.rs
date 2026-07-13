@@ -46,6 +46,10 @@ pub(super) fn reduce_settings(
             state.settings.toggle_low_scroll_horizontal();
             DispatchResult::handled()
         }
+        Action::SettingsToggleLowScrollFormatJson => {
+            state.settings.toggle_low_scroll_format_json();
+            DispatchResult::handled()
+        }
         Action::TextInput {
             target: InputTarget::SettingsErBrowser,
             ch,

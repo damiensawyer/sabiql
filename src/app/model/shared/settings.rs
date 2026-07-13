@@ -242,6 +242,12 @@ impl SettingsState {
             !self.selected_low_scroll.allow_horizontal_scroll;
     }
 
+    /// Toggle the `format_json` flag: when on, JSON columns are pretty-printed
+    /// on display.
+    pub fn toggle_low_scroll_format_json(&mut self) {
+        self.selected_low_scroll.format_json = !self.selected_low_scroll.format_json;
+    }
+
     /// Cycle `max_lines_per_row` forward through the preset ladder, wrapping at
     /// the end back to "no limit".
     pub fn cycle_low_scroll_max_lines_next(&mut self) {

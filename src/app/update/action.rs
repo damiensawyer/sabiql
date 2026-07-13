@@ -351,6 +351,7 @@ pub enum Action {
     SettingsStartCustomBrowserEdit,
     SettingsStopCustomBrowserEdit,
     SettingsToggleLowScrollScroll,
+    SettingsToggleLowScrollFormatJson,
     SettingsApply,
     SettingsCancel,
     SettingsSaved(AppSettings),
