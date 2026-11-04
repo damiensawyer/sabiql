@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{HighlightSpacing, List, ListItem, ListState, Paragraph};
 
 use crate::app::model::app_state::AppState;
 use crate::app::model::connection::list::{self, ConnectionListItem};
@@ -253,21 +253,24 @@ pub fn render_connection_list(
                 .fg(theme.semantic.text.accent)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("> ");
+        .highlight_symbol("> ")
+        .highlight_spacing(HighlightSpacing::Always);
 
     // When a top panel is shown, the bottom panel's item indices are offset
     // by one (the LastConnection item at index 0 is excluded). Adjust the
     // highlight index accordingly so the selection marker appears on the
     // correct visual row.
+    // Index 0 ("Open last") is rendered in the top panel, so it leaves the
+    // bottom list with no selection.
     let selected = state.ui.connection_list_selected();
-    let adjusted_selected = if has_top_panel && selected > 0 {
-        selected - 1
+    let adjusted_selected = if has_top_panel {
+        selected.checked_sub(1)
     } else {
-        selected
+        Some(selected)
     };
 
     let mut list_state = ListState::default()
-        .with_selected(Some(adjusted_selected))
+        .with_selected(adjusted_selected)
         .with_offset(state.ui.connection_list_scroll_offset());
     frame.render_stateful_widget(list, area, &mut list_state);
 

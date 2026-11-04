@@ -300,9 +300,8 @@ impl ResultPane {
         if low_scroll_enabled {
             let settings = low_scroll;
             // When "Format JSON" is on and the result has detected JSON
-            // columns, those columns are pretty-printed up front so width
-            // sizing, row-height measurement, and rendering all see the same
-            // text. Otherwise the typed values are measured directly.
+            // columns, those columns are pretty-printed so width sizing,
+            // row-height measurement, and rendering all see the same text.
             let format_json = settings.format_json && json_columns.iter().any(|&j| j);
             let key = low_scroll_layout::LowScrollLayoutKey {
                 result_generation,
@@ -311,59 +310,39 @@ impl ResultPane {
                 max_lines_per_row: settings.max_lines_per_row,
                 format_json,
             };
-            let editing_cell = editing_cell.as_ref();
-            let (plan, cell_vertical_offset, measured_layout) = if format_json {
-                let display_rows = format_display_rows(result.values(), json_columns);
-                let low_scroll_widths =
-                    calculate_low_scroll_ideal_widths(&result.columns, &display_rows);
-                Self::render_low_scroll_table(
-                    frame,
-                    inner,
-                    result,
-                    &display_rows,
-                    LowScrollTableParams {
-                        ideal_widths: &low_scroll_widths,
-                        min_widths,
-                        horizontal_offset,
-                        settings,
-                        scroll_offset,
-                        selection,
-                        editing_cell,
-                        staged_delete_rows,
-                        yank_flash,
-                        cell_vertical_offset,
-                        now,
-                        stored_low_scroll,
-                        key,
-                    },
-                    theme,
-                )
-            } else {
-                let low_scroll_widths =
-                    calculate_low_scroll_ideal_widths(&result.columns, result.values());
-                Self::render_low_scroll_table(
-                    frame,
-                    inner,
-                    result,
-                    result.values(),
-                    LowScrollTableParams {
-                        ideal_widths: &low_scroll_widths,
-                        min_widths,
-                        horizontal_offset,
-                        settings,
-                        scroll_offset,
-                        selection,
-                        editing_cell,
-                        staged_delete_rows,
-                        yank_flash,
-                        cell_vertical_offset,
-                        now,
-                        stored_low_scroll,
-                        key,
-                    },
-                    theme,
-                )
-            };
+            // JSON is pretty-printed lazily per cell (see `FormattedCell`), so
+            // only the sampled rows, the visible rows, and a layout re-measure
+            // pay for it — never every row on every frame.
+            let json_columns: &[bool] = if format_json { json_columns } else { &[] };
+            let sample: Vec<Vec<FormattedCell<'_>>> = result
+                .values()
+                .iter()
+                .take(LOW_SCROLL_WIDTH_SAMPLE_ROWS)
+                .map(|row| formatted_row(row, json_columns))
+                .collect();
+            let low_scroll_widths = calculate_low_scroll_ideal_widths(&result.columns, &sample);
+            let (plan, cell_vertical_offset, measured_layout) = Self::render_low_scroll_table(
+                frame,
+                inner,
+                result,
+                json_columns,
+                LowScrollTableParams {
+                    ideal_widths: &low_scroll_widths,
+                    min_widths,
+                    horizontal_offset,
+                    settings,
+                    scroll_offset,
+                    selection,
+                    editing_cell: editing_cell.as_ref(),
+                    staged_delete_rows,
+                    yank_flash,
+                    cell_vertical_offset,
+                    now,
+                    stored_low_scroll,
+                    key,
+                },
+                theme,
+            );
             return RenderedResultGeometry {
                 plan,
                 widths_cache,
@@ -575,11 +554,11 @@ impl ResultPane {
     /// so the whole table fits within `inner.width` (no horizontal scrollbar);
     /// when true, columns keep their natural widths and the user can scroll
     /// horizontally like the normal table.
-    fn render_low_scroll_table<C: CellText>(
+    fn render_low_scroll_table(
         frame: &mut Frame,
         inner: Rect,
         result: &QueryResult,
-        rows: &[Vec<C>],
+        json_columns: &[bool],
         params: LowScrollTableParams<'_>,
         theme: &ThemePalette,
     ) -> (
@@ -642,11 +621,12 @@ impl ResultPane {
         // it stays stable while scrolling horizontally. Reused across frames when
         // the layout key is unchanged (the common case while scrolling), so a
         // multi-million-row result is measured only once.
+        let rows = result.values();
         let measured_layout = measured_low_scroll_layout(stored_low_scroll, key, || {
             rows.iter()
                 .map(|row| {
                     low_scroll_layout::row_layout(
-                        row,
+                        &formatted_row(row, json_columns),
                         &measure_widths,
                         PADDING,
                         settings.max_lines_per_row,
@@ -718,7 +698,7 @@ impl ResultPane {
                     theme,
                 );
 
-                let row_data = &rows[abs_row_idx];
+                let row_data = formatted_row(&rows[abs_row_idx], json_columns);
                 let cells: Vec<Cell> = viewport_indices
                     .iter()
                     .zip(viewport_widths.iter())
@@ -1059,23 +1039,43 @@ fn truncate_cell(s: &str, max_width: usize) -> String {
     truncate_to_width(first_line, max_width)
 }
 
-/// Build a display copy of the result values with detected JSON columns
-/// pretty-printed. Only call this when there is at least one JSON column and
-/// "Format JSON" is enabled.
-fn format_display_rows(values: &[Vec<QueryValue>], json_columns: &[bool]) -> Vec<Vec<String>> {
-    values
-        .iter()
-        .map(|row| {
-            row.iter()
-                .enumerate()
-                .map(|(col, cell)| {
-                    if json_columns.get(col).copied().unwrap_or(false) && !cell.is_null() {
-                        json_format::pretty_format_json(&cell.cell_text(), 0)
-                    } else {
-                        cell.cell_text().into_owned()
-                    }
-                })
-                .collect()
+/// Rows sampled when sizing Low Scroll column widths.
+const LOW_SCROLL_WIDTH_SAMPLE_ROWS: usize = 50;
+
+/// A result cell as Low Scroll Mode displays it: detected JSON columns are
+/// pretty-printed (when "Format JSON" is on), everything else is shown as-is.
+/// Formatting happens on demand in `cell_text`, so building a row of these is
+/// cheap and no JSON is parsed for rows that are never measured or drawn.
+struct FormattedCell<'a> {
+    value: &'a QueryValue,
+    pretty_json: bool,
+}
+
+impl CellText for FormattedCell<'_> {
+    fn cell_text(&self) -> Cow<'_, str> {
+        if self.pretty_json && !self.value.is_null() {
+            Cow::Owned(json_format::pretty_format_json(
+                &self.value.display_value_ref(),
+                0,
+            ))
+        } else {
+            self.value.display_value_ref()
+        }
+    }
+
+    fn is_null(&self) -> bool {
+        self.value.is_null()
+    }
+}
+
+/// Wrap a row of result values for Low Scroll display. Pass an empty
+/// `json_columns` to disable JSON formatting.
+fn formatted_row<'a>(row: &'a [QueryValue], json_columns: &[bool]) -> Vec<FormattedCell<'a>> {
+    row.iter()
+        .enumerate()
+        .map(|(col, value)| FormattedCell {
+            value,
+            pretty_json: json_columns.get(col).copied().unwrap_or(false),
         })
         .collect()
 }
@@ -1089,15 +1089,13 @@ pub(crate) fn calculate_low_scroll_ideal_widths<C: CellText>(
     headers: &[String],
     rows: &[Vec<C>],
 ) -> Vec<u16> {
-    const SAMPLE_ROWS: usize = 50;
-
     headers
         .iter()
         .enumerate()
         .map(|(col_idx, header)| {
             let mut max_width = UnicodeWidthStr::width(header.as_str());
 
-            for row in rows.iter().take(SAMPLE_ROWS) {
+            for row in rows.iter().take(LOW_SCROLL_WIDTH_SAMPLE_ROWS) {
                 if let Some(cell) = row.get(col_idx) {
                     for line in cell.cell_text().lines() {
                         max_width = max_width.max(UnicodeWidthStr::width(line));
