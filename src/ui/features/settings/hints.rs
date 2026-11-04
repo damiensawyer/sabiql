@@ -1,12 +1,12 @@
 use crate::app::model::app_state::AppState;
 use crate::app::model::shared::settings::{ErBrowserChoice, SettingsSection};
 use crate::app::update::input::keybindings::settings;
-use crate::primitives::molecules::{FooterHintBar, HintTuple};
+use crate::primitives::molecules::FooterHintBar;
 
-const EDIT_DONE_HINT: HintTuple = ("Esc", "Done", false);
-const EDIT_TYPE_HINT: HintTuple = ("Type", "Browser", false);
+const EDIT_DONE_HINT: (&str, &str) = ("Esc", "Done");
+const EDIT_TYPE_HINT: (&str, &str) = ("Type", "Browser");
 
-pub fn settings_hints(state: &AppState) -> Vec<HintTuple> {
+pub fn settings_hints(state: &AppState) -> Vec<(&'static str, &'static str)> {
     if state.settings.is_editing_custom_er_browser() {
         return vec![settings::APPLY.as_hint(), EDIT_DONE_HINT, EDIT_TYPE_HINT];
     }

@@ -1,15 +1,15 @@
 use crate::update::action::Action;
 use crate::update::input::keybindings::{KeyCombo, ROW_DETAIL};
 
-pub fn handle_row_detail_keys(combo: KeyCombo) -> Action {
+pub(super) fn handle_row_detail_keys(combo: KeyCombo) -> Action {
     ROW_DETAIL.resolve(&combo).unwrap_or(Action::None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::update::action::{Action, ModalKind, ScrollAmount, ScrollDirection, ScrollTarget};
-    use crate::update::input::keybindings::{Key, KeyCombo};
+    use crate::update::action::{ModalKind, ScrollAmount, ScrollDirection, ScrollTarget};
+    use crate::update::input::keybindings::Key;
     use rstest::rstest;
 
     fn combo(k: Key) -> KeyCombo {

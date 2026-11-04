@@ -407,6 +407,14 @@ impl SettingsState {
         }
     }
 
+    pub fn edit_custom_browser<R>(
+        &mut self,
+        edit: impl FnOnce(&mut TextInputState) -> R,
+    ) -> Option<R> {
+        self.is_editing_custom_er_browser()
+            .then(|| edit(&mut self.custom_er_browser))
+    }
+
     pub fn commit_saved(
         &mut self,
         theme: ThemeId,
@@ -551,6 +559,7 @@ mod tests {
         let mut state = SettingsState::default();
         state.switch_next_section();
         state.switch_next_section();
+        state.switch_next_section();
         state.start_custom_browser_edit();
 
         assert_eq!(state.selected_er_browser(), None);
@@ -559,6 +568,7 @@ mod tests {
     #[test]
     fn known_browser_choice_returns_logical_browser_name() {
         let mut state = SettingsState::default();
+        state.switch_next_section();
         state.switch_next_section();
         state.switch_next_section();
         state.select_next();
@@ -641,6 +651,7 @@ mod tests {
         let mut state = SettingsState::default();
         state.switch_next_section();
         state.switch_next_section();
+        state.switch_next_section();
         state.select_next();
 
         state.move_custom_browser_cursor(CursorMove::Left);
@@ -654,6 +665,7 @@ mod tests {
     #[test]
     fn custom_browser_input_requires_edit_mode() {
         let mut state = SettingsState::default();
+        state.switch_next_section();
         state.switch_next_section();
         state.switch_next_section();
         state.select_previous();

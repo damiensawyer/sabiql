@@ -68,7 +68,7 @@ pub mod connection_setup {
         key_short: "Enter",
         key: "Enter",
         desc_short: "Toggle",
-        description: "Toggle dropdown (SSL field)",
+        description: "Toggle dropdown",
         action: Action::ConnectionSetupToggleDropdown,
         combos: &[KeyCombo::plain(Key::Enter)],
     };
@@ -134,7 +134,7 @@ pub mod connection_error {
         key_short: "d",
         key: "d",
         desc_short: "Details",
-        description: "Toggle error details",
+        description: "Toggle error details and requirements",
         bindings: &[ExecBinding {
             action: Action::ToggleConnectionErrorDetails,
             combos: &[KeyCombo::plain(Key::Char('d'))],
@@ -200,9 +200,9 @@ pub mod connection_error {
         key_short: "r",
         key: "r",
         desc_short: "Retry",
-        description: "Retry service connection",
+        description: "Retry connection",
         bindings: &[ExecBinding {
-            action: Action::RetryServiceConnection,
+            action: Action::RetryConnection,
             combos: &[KeyCombo::plain(Key::Char('r'))],
         }],
     };
@@ -242,15 +242,13 @@ pub mod connection_selector {
         key: "Tab",
         desc_short: "Toggle panels",
         description: "Toggle between last connection and rest of list",
-        bindings: &[
-            ExecBinding {
-                action: Action::ListSelect {
-                    target: ListTarget::ConnectionList,
-                    motion: ListMotion::Next,
-                },
-                combos: &[KeyCombo::plain(Key::Tab)],
+        bindings: &[ExecBinding {
+            action: Action::ListSelect {
+                target: ListTarget::ConnectionList,
+                motion: ListMotion::Next,
             },
-        ],
+            combos: &[KeyCombo::plain(Key::Tab)],
+        }],
     };
 
     pub const SELECT: ModeRow = ModeRow {

@@ -22,7 +22,7 @@
 
       forAllSystems = nixpkgs.lib.genAttrs systems;
 
-      rustVersion = "1.96.0";
+      rustVersion = "1.98.1";
       mkRustToolchain =
         pkgs:
         pkgs.rust-bin.stable.${rustVersion}.default.override {
@@ -60,7 +60,7 @@
         {
           default = rustPlatform.buildRustPackage {
             pname = "sabiql";
-            version = "1.11.0";
+            version = "3.0.0";
 
             src = self;
             cargoLock.lockFile = ./Cargo.lock;
@@ -74,7 +74,7 @@
             '';
 
             meta = {
-              description = "A fast, driver-less TUI for browsing and editing PostgreSQL databases";
+              description = "Fast, safe-by-design, Vim-first DB TUI with ER diagrams";
               homepage = "https://github.com/riii111/sabiql";
               license = pkgs.lib.licenses.mit;
               mainProgram = "sabiql";
@@ -102,7 +102,9 @@
               pkgs.cargo-nextest
               pkgs.graphviz
               pkgs.lefthook
+              pkgs.mysql84
               pkgs.postgresql
+              pkgs.sqlite
               pkgs.python3
               pkgs.ruby
             ];

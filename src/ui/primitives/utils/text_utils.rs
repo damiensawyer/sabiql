@@ -325,9 +325,7 @@ mod tests {
             for line in &lines {
                 assert!(
                     UnicodeWidthStr::width(line.as_str()) <= width as usize,
-                    "line {:?} exceeds width {}",
-                    line,
-                    width
+                    "line {line:?} exceeds width {width}"
                 );
             }
         }
@@ -357,7 +355,10 @@ mod tests {
         fn plain_text_no_hang() {
             // A line without the JSON key pattern wraps without hanging indent.
             let lines = wrap_text_lines("abcde fghij", 5);
-            assert_eq!(lines, vec!["abcde".to_string(), " fghi".to_string(), "j".to_string()]);
+            assert_eq!(
+                lines,
+                vec!["abcde".to_string(), " fghi".to_string(), "j".to_string()]
+            );
         }
 
         #[rstest]
@@ -368,9 +369,7 @@ mod tests {
             for line in &lines {
                 assert!(
                     UnicodeWidthStr::width(line.as_str()) <= width as usize,
-                    "line {:?} exceeds width {}",
-                    line,
-                    width
+                    "line {line:?} exceeds width {width}"
                 );
             }
         }

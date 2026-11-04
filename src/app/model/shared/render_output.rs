@@ -1,40 +1,104 @@
+use crate::model::shared::low_scroll::MeasuredLowScrollLayout;
 use crate::model::shared::viewport::{ColumnWidthsCache, ViewportPlan};
 
-/// Pane geometry measured during a draw. Owned by the model so state
-/// write-back (`AppState::apply_render_output`) stays port-agnostic; the
-/// renderer port re-exports this type as its output.
+#[derive(Clone, Copy)]
+pub struct CellDetailViewport {
+    pub visible_rows: usize,
+    pub viewport_width: usize,
+}
+
+/// Layout data produced during a draw. Owned by the model so state write-back
+/// stays port-agnostic; the renderer port re-exports this type as its output.
 #[derive(Default)]
 pub struct RenderOutput {
-    pub inspector_viewport_plan: ViewportPlan,
-    pub result_viewport_plan: ViewportPlan,
-    pub result_widths_cache: ColumnWidthsCache,
+    pub browse: BrowseLayout,
+    pub input: InputLayout,
+    pub pickers: PickerLayouts,
+    pub details: DetailLayout,
+    pub overlays: OverlayLayout,
+}
+
+#[derive(Default)]
+pub struct BrowseLayout {
+    pub explorer: ExplorerLayout,
+    pub inspector: InspectorLayout,
+    pub result: ResultLayout,
+}
+
+#[derive(Default)]
+pub struct ExplorerLayout {
+    pub pane_height: u16,
+    pub content_width: usize,
+}
+
+#[derive(Default)]
+pub struct InspectorLayout {
+    pub viewport_plan: ViewportPlan,
+    pub pane_height: u16,
+}
+
+#[derive(Default)]
+pub struct ResultLayout {
+    pub viewport_plan: ViewportPlan,
+    pub widths_cache: ColumnWidthsCache,
+    pub pane_height: u16,
     /// Corrected/clamped `ResultInteraction::cell_vertical_offset`, computed
     /// against the active cell's actual wrapped-line count during this draw.
-    /// Mirrors how `result_viewport_plan` self-corrects `horizontal_offset`.
-    pub result_cell_vertical_offset: usize,
+    /// Mirrors how `viewport_plan` self-corrects `horizontal_offset`.
+    pub cell_vertical_offset: usize,
     /// Low Scroll Mode layout measured during this draw, or `None` when the
     /// mode is off. Carries the per-row line heights (and the active row's
     /// line bounds within the pane) so the scroll reducer can do line-based
     /// visibility math instead of the row-count math used by the normal
-    /// table. Like `result_viewport_plan`, it reflects the previous frame.
-    pub result_low_scroll_layout: Option<crate::model::shared::low_scroll::MeasuredLowScrollLayout>,
-    pub explorer_pane_height: u16,
-    pub explorer_content_width: usize,
-    pub inspector_pane_height: u16,
-    pub result_pane_height: u16,
+    /// table. Like `viewport_plan`, it reflects the previous frame.
+    pub low_scroll_layout: Option<MeasuredLowScrollLayout>,
+}
+
+#[derive(Default)]
+pub struct InputLayout {
     pub command_line_visible_width: Option<usize>,
+}
+
+#[derive(Default)]
+pub struct PickerLayouts {
     pub connection_list_pane_height: Option<u16>,
-    pub table_picker_pane_height: Option<u16>,
-    pub table_picker_filter_visible_width: Option<usize>,
-    pub er_picker_pane_height: Option<u16>,
-    pub er_picker_filter_visible_width: Option<usize>,
-    pub query_history_picker_pane_height: Option<u16>,
-    pub query_history_picker_filter_visible_width: Option<usize>,
-    pub jsonb_detail_editor_visible_rows: Option<usize>,
-    pub row_detail_content_visible_rows: Option<usize>,
-    pub row_detail_content_visible_columns: Option<usize>,
-    pub confirm_preview_viewport_height: Option<u16>,
-    pub confirm_preview_content_height: Option<u16>,
-    pub confirm_preview_scroll: u16,
+    pub table: Option<PickerLayout>,
+    pub er: Option<PickerLayout>,
+    pub query_history: Option<PickerLayout>,
+}
+
+pub struct PickerLayout {
+    pub pane_height: u16,
+    pub filter_visible_width: usize,
+}
+
+#[derive(Default)]
+pub struct DetailLayout {
+    pub json: Option<JsonDetailLayout>,
+    pub cell: Option<CellDetailViewport>,
+    pub row: Option<RowDetailLayout>,
+}
+
+pub struct JsonDetailLayout {
+    pub editor_visible_rows: usize,
+}
+
+pub struct RowDetailLayout {
+    pub visible_rows: usize,
+    pub visible_columns: usize,
+}
+
+#[derive(Default)]
+pub struct OverlayLayout {
+    pub confirm_preview: ConfirmPreviewLayout,
     pub explain_compare_viewport_height: Option<u16>,
+    pub sqlite_diagnostics_content_line_count: Option<usize>,
+    pub sqlite_diagnostics_viewport_height: Option<usize>,
+}
+
+#[derive(Default)]
+pub struct ConfirmPreviewLayout {
+    pub viewport_height: Option<u16>,
+    pub content_height: Option<u16>,
+    pub scroll: u16,
 }

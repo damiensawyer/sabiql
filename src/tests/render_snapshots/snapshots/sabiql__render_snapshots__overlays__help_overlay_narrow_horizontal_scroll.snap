@@ -2,7 +2,7 @@
 source: src/tests/render_snapshots/overlays.rs
 expression: output
 ---
-test_project | test_db | - | no dsn | localhost:54
+test_proj… ▸ … ▸ - connected | localhost:5432/test
 ┌ [1] Explor┐[Info] [Cols] [Idx] [FK] [RLS] [Trig]
 │> publi╭ Help ───────────────────────────╮──────┐
 │  publi│                             Ope▲│      │
@@ -12,16 +12,15 @@ test_project | test_db | - | no dsn | localhost:54
 │       │                             Ins││      │
 │       │                             Pre││      │
 │       │                             Edi┃│      │
-│       │                             Mov┃│      │
+│       │                             Mov││      │
 │       │                             Jum││──────┘
 │       │                             Ope││──────┐
 │       │                             Exi││      │
-│       │                             Lin││      │
 │       │                             Exe││      │
 │       │                             Can││      │
-│       │                                ││      │
-│       │                                ││      │
-│       │                             Typ▼│      │
+│       │                             Ret││      │
+│       │                             Mov▼│      │
 │       │ x  23% ◀︎────═════─────────────▶︎ │      │
-└───────╰ type: Filter │ Backspace: Edit │╯──────┘
-←→:H-Scroll  ?:Close
+│       │─────────────────────────────────│      │
+│       │ [BROWSE]                        │      │
+└───────╰ /: Filter │ Esc: Close │ ?: Clos╯──────┘

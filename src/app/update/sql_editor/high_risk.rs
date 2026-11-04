@@ -2,12 +2,13 @@ use std::time::Instant;
 
 use crate::model::app_state::AppState;
 use crate::model::shared::key_sequence::KeySequenceState;
-use crate::model::shared::text_input::{TextInputLike, TextInputState};
+use crate::model::shared::text_input::TextInputState;
 use crate::model::sql_editor::modal::{
     HIGH_RISK_INPUT_VISIBLE_WIDTH, SqlModalContext, SqlModalStatus,
 };
 use crate::update::action::{Action, InputTarget};
 use crate::update::dispatch_result::DispatchResult;
+use crate::update::helpers::reject_pending_mysql_connection_probe;
 
 use super::helpers::start_adhoc_if_connected;
 
@@ -34,7 +35,7 @@ pub(super) fn reduce_high_risk_confirmation(
                 SqlModalStatus::ConfirmingHigh { .. } | SqlModalStatus::ConfirmingRisk { .. }
             ) {
                 state.sql_modal.cancel_confirmation();
-                state.ui.key_sequence = KeySequenceState::Idle;
+                state.ui.set_key_sequence(KeySequenceState::Idle);
                 DispatchResult::handled()
             } else {
                 DispatchResult::pass()
@@ -60,6 +61,40 @@ pub(super) fn reduce_high_risk_confirmation(
             }
             DispatchResult::handled()
         }
+        Action::TextDelete {
+            target: target @ (InputTarget::SqlModalHighRisk | InputTarget::SqlModalAnalyzeHighRisk),
+        } => {
+            if let Some(input) = high_risk_input_mut(&mut state.sql_modal, *target) {
+                input.delete();
+                input.update_viewport(HIGH_RISK_INPUT_VISIBLE_WIDTH);
+            }
+            DispatchResult::handled()
+        }
+        Action::TextKill {
+            target: target @ (InputTarget::SqlModalHighRisk | InputTarget::SqlModalAnalyzeHighRisk),
+            direction,
+        } => {
+            let killed = high_risk_input_mut(&mut state.sql_modal, *target)
+                .map(|input| {
+                    let killed = input.kill(*direction);
+                    input.update_viewport(HIGH_RISK_INPUT_VISIBLE_WIDTH);
+                    killed
+                })
+                .unwrap_or_default();
+            state.record_kill(killed);
+            DispatchResult::handled()
+        }
+        Action::TextYank {
+            target: target @ (InputTarget::SqlModalHighRisk | InputTarget::SqlModalAnalyzeHighRisk),
+        } => {
+            if let Some(killed) = state.kill_buffer().map(str::to_owned)
+                && let Some(input) = high_risk_input_mut(&mut state.sql_modal, *target)
+            {
+                input.yank(&killed);
+                input.update_viewport(HIGH_RISK_INPUT_VISIBLE_WIDTH);
+            }
+            DispatchResult::handled()
+        }
         Action::TextMoveCursor {
             target: target @ (InputTarget::SqlModalHighRisk | InputTarget::SqlModalAnalyzeHighRisk),
             direction: movement,
@@ -72,6 +107,10 @@ pub(super) fn reduce_high_risk_confirmation(
         }
 
         Action::SqlModalConfirmExecute => {
+            if reject_pending_mysql_connection_probe(state) {
+                state.sql_modal.cancel_confirmation();
+                return DispatchResult::handled();
+            }
             // `matches!` + flag instead of `if let` because the immutable borrow
             // from pattern matching must end before we can mutate `state.sql_modal.status`.
             let matched = matches!(

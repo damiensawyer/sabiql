@@ -7,19 +7,18 @@ use std::time::Instant;
 use crate::cmd::effect::Effect;
 use crate::model::app_state::AppState;
 use crate::model::browse::query_execution::PREVIEW_PAGE_SIZE;
-use crate::services::AppServices;
 use crate::update::action::Action;
 use crate::update::dispatch_result::DispatchResult;
+use crate::update::helpers::reject_pending_mysql_connection_probe;
 
-pub fn dispatch_query(
+pub(in crate::update) fn dispatch_query(
     state: &mut AppState,
     action: &Action,
     now: Instant,
-    services: &AppServices,
 ) -> DispatchResult {
-    execution::reduce_execution(state, action, now, services)
-        .or_else(|| write::reduce_write(state, action, now, services))
-        .or_else(|| pagination::reduce_pagination(state, action, now, services))
+    execution::reduce_execution(state, action, now)
+        .or_else(|| write::reduce_write(state, action, now))
+        .or_else(|| pagination::reduce_pagination(state, action, now))
 }
 
 /// Builds the preview effect for the table currently held in pagination state,
@@ -36,37 +35,51 @@ pub(super) fn preview_effect_for_current_table(
     target_page: usize,
     generation: u64,
 ) -> Option<Effect> {
-    let dsn = state.session.dsn.clone()?;
+    if reject_pending_mysql_connection_probe(state) {
+        return None;
+    }
+    let dsn = state.session.dsn().map(String::from)?;
     let run_id = state.query.begin_running(now);
     Some(Effect::ExecutePreview {
         dsn,
-        schema: state.query.pagination.schema.clone(),
-        table: state.query.pagination.table.clone(),
+        schema: state.query.pagination.schema().to_string(),
+        table: state.query.pagination.table().to_string(),
         generation,
         run_id,
         limit: PREVIEW_PAGE_SIZE,
         offset: target_page * PREVIEW_PAGE_SIZE,
         target_page,
-        read_only: state.session.read_only,
     })
 }
 
 #[cfg(test)]
 pub(super) mod tests {
+    use crate::test_support;
+
+    use crate::domain::Column;
     use std::sync::Arc;
     use std::time::Instant;
 
     use crate::domain::{
-        Column, ColumnAttributes, CommandTag, Index, IndexAttributes, IndexType, QueryResult,
-        QuerySource, Table, Trigger, TriggerEvent, TriggerTiming,
+        ColumnAttributes, CommandTag, Index, IndexAttributes, IndexType, QueryResult, QuerySource,
+        Table, Trigger, TriggerEvent, TriggerTiming,
     };
     use crate::model::app_state::AppState;
-    use crate::update::action::Action;
+    use crate::update::action::{Action, QueryCompletionContext};
+    use crate::update::test_fixtures;
 
     pub fn create_test_state() -> AppState {
         let mut state = AppState::new("test_project".to_string());
-        state.session.dsn = Some("postgres://localhost/test".to_string());
+        test_fixtures::activate_postgres_connection(&mut state, "postgres://localhost/test");
         state
+    }
+
+    pub fn active_dsn(state: &AppState) -> String {
+        state
+            .session
+            .dsn()
+            .expect("query test state must have an active connection")
+            .to_string()
     }
 
     pub fn begin_query_run(state: &mut AppState) -> u64 {
@@ -81,11 +94,15 @@ pub(super) mod tests {
     ) -> Action {
         let run_id = begin_query_run(state);
         Action::QueryCompleted {
-            dsn: "postgres://localhost/test".to_string(),
             run_id,
             result,
-            generation,
-            target_page,
+            context: match target_page {
+                Some(target_page) => QueryCompletionContext::Preview {
+                    generation,
+                    target_page,
+                },
+                None => QueryCompletionContext::Adhoc,
+            },
         }
     }
 
@@ -124,27 +141,14 @@ pub(super) mod tests {
         Table {
             schema: "public".to_string(),
             name: "users".to_string(),
-            owner: None,
             columns: vec![
                 Column {
-                    name: "id".to_string(),
-                    data_type: "int".to_string(),
-                    default: None,
                     attributes: ColumnAttributes::PRIMARY_KEY | ColumnAttributes::UNIQUE,
-                    comment: None,
-                    ordinal_position: 1,
+                    ..test_support::column::test_nullable_column("id", "int", 1)
                 },
-                Column {
-                    name: "name".to_string(),
-                    data_type: "text".to_string(),
-                    default: None,
-                    attributes: ColumnAttributes::NULLABLE,
-                    comment: None,
-                    ordinal_position: 2,
-                },
+                test_support::column::test_nullable_column("name", "text", 2),
             ],
             primary_key: Some(vec!["id".to_string()]),
-            foreign_keys: vec![],
             indexes: vec![Index {
                 name: "users_pkey".to_string(),
                 columns: vec!["id".to_string()],
@@ -152,33 +156,30 @@ pub(super) mod tests {
                 index_type: IndexType::BTree,
                 definition: None,
             }],
-            rls: None,
             triggers: vec![Trigger {
                 name: "trg".to_string(),
                 timing: TriggerTiming::After,
                 events: vec![TriggerEvent::Update],
-                function_name: "f".to_string(),
-                security_definer: false,
+                action_order: None,
+                definition: "f".to_string(),
+                security_context: None,
+                creation_context: None,
             }],
-            row_count_estimate: None,
-            comment: None,
+            ..test_support::table::minimal("", "")
         }
     }
 
-    pub fn jsonb_table_detail() -> Table {
+    pub fn json_table_detail() -> Table {
         let mut detail = users_table_detail();
-        detail.columns.push(Column {
-            name: "metadata".to_string(),
-            data_type: "jsonb".to_string(),
-            default: None,
-            attributes: ColumnAttributes::NULLABLE,
-            comment: None,
-            ordinal_position: 3,
-        });
+        detail
+            .columns
+            .push(test_support::column::test_nullable_column(
+                "metadata", "jsonb", 3,
+            ));
         detail
     }
 
-    pub fn editable_preview_result_with_jsonb() -> Arc<QueryResult> {
+    pub fn editable_preview_result_with_json() -> Arc<QueryResult> {
         Arc::new(QueryResult::success(
             "SELECT * FROM users".to_string(),
             vec!["id".to_string(), "name".to_string(), "metadata".to_string()],
@@ -194,9 +195,11 @@ pub(super) mod tests {
 
     // Mirrors the executor's command-tag path: affected rows become row_count
     pub fn adhoc_result_with_tag(tag: CommandTag) -> Arc<QueryResult> {
-        let mut result = QueryResult::success(String::new(), vec![], vec![], 5, QuerySource::Adhoc);
-        result.row_count = tag.affected_rows().unwrap_or(0) as usize;
-        Arc::new(result.with_command_tag(tag))
+        Arc::new(
+            QueryResult::success(String::new(), vec![], vec![], 5, QuerySource::Adhoc)
+                .with_row_count(tag.affected_rows().unwrap_or(0) as usize)
+                .with_command_tag(tag),
+        )
     }
 
     pub fn adhoc_error_result() -> Arc<QueryResult> {
@@ -210,8 +213,7 @@ pub(super) mod tests {
 
     pub fn state_with_table(schema: &str, table: &str) -> AppState {
         let mut state = create_test_state();
-        state.query.pagination.schema = schema.to_string();
-        state.query.pagination.table = table.to_string();
+        state.query.pagination.reset_for_table(schema, table);
         state
     }
 }

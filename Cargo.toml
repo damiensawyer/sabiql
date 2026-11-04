@@ -8,17 +8,18 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "1.14.0"
+version = "3.0.2"
 edition = "2024"
-rust-version = "1.96"
+rust-version = "1.98"
 license = "MIT"
 repository = "https://github.com/riii111/sabiql"
 
 [workspace.dependencies]
-sabiql-domain = { path = "src/domain", version = "1.13.0" }
-sabiql-app = { path = "src/app", version = "1.13.0" }
-sabiql-infra = { path = "src/infra", version = "1.13.0" }
-sabiql-ui = { path = "src/ui", version = "1.13.0" }
+# When adding third-party dependencies, update `absolute-paths-allowed-crates` in clippy.toml.
+sabiql-domain = { path = "src/domain", version = "3.0.2" }
+sabiql-app = { path = "src/app", version = "3.0.2" }
+sabiql-infra = { path = "src/infra", version = "3.0.2" }
+sabiql-ui = { path = "src/ui", version = "3.0.2" }
 arboard = "3"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
@@ -30,33 +31,45 @@ dotenvy = "0.15"
 futures = "0.3"
 insta = "1"
 lru = "0.18"
+libc = "0.2"
 mockall = "0.13"
 nucleo-matcher = "0.3"
+quick-xml = { version = "0.38", features = ["async-tokio"] }
 ratatui = "0.30"
 rstest = "0.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-self_update = { version = "0.42", default-features = false, features = ["archive-tar", "archive-zip", "compression-flate2", "rustls"] }
+self_update = { version = "1.3", default-features = false, features = ["github", "archive-tar", "archive-zip", "compression-tar-gz", "ureq", "rustls"] }
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "time", "io-util", "process", "rt-multi-thread", "macros", "fs"] }
 tokio-util = "0.7"
 toml = "0.8"
 unicode-casefold = "0.2"
+unicode-segmentation = "1"
 unicode-width = "0.2"
-uuid = { version = "1", features = ["v4"] }
+urlencoding = "2"
+url = "2"
+uuid = { version = "1", features = ["v4", "v5"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }
 
 [package]
 name = "sabiql"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "A fast, driver-less TUI for browsing and editing PostgreSQL databases"
+description = "Fast, safe-by-design, Vim-first DB TUI with ER diagrams"
 license.workspace = true
 repository.workspace = true
 homepage = "https://github.com/riii111/sabiql"
 readme = "README.md"
-keywords = ["postgresql", "tui", "database", "cli", "sql"]
+keywords = ["postgresql", "mysql", "sqlite", "tui", "database"]
 categories = ["command-line-utilities", "database"]
 
 [dependencies]
@@ -67,6 +80,7 @@ clap.workspace = true
 dotenvy.workspace = true
 self_update = { workspace = true, optional = true }
 sabiql-app.workspace = true
+sabiql-domain.workspace = true
 sabiql-infra.workspace = true
 sabiql-ui.workspace = true
 
@@ -77,9 +91,11 @@ self-update = ["dep:self_update"]
 [dev-dependencies]
 sabiql-domain.workspace = true
 sabiql-app = { workspace = true, features = ["test-support"] }
+sabiql-infra = { workspace = true, features = ["test-support"] }
 sabiql-ui = { workspace = true, features = ["test-support"] }
 ratatui.workspace = true
 insta.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
@@ -88,6 +104,10 @@ workspace = true
 [profile.release]
 lto = true
 codegen-units = 1
+
+[workspace.lints.rust]
+redundant_imports = "deny"
+unreachable_pub = "deny"
 
 [workspace.lints.clippy]
 # Groups
@@ -129,7 +149,11 @@ used_underscore_binding = "allow"  # rstest #[case] doc params use _prefix conve
 naive_bytecount = "allow"  # bytecount crate would be an unnecessary dependency
 
 # Restriction lints (opt-in)
+absolute_paths = "warn"
 dbg_macro = "deny"
+exit = "deny"
+get_unwrap = "deny"
+mem_forget = "deny"
 todo = "deny"
 print_stdout = "deny"
 print_stderr = "deny"

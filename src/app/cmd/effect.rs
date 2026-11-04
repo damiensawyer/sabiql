@@ -1,7 +1,11 @@
-use crate::domain::Table;
-use crate::domain::connection::{ConnectionId, ConnectionProfile, SslMode};
-use crate::ports::outbound::AppSettings;
-use crate::update::action::Action;
+use std::sync::Arc;
+
+use crate::domain::connection::{ConnectionConfig, ConnectionId, ConnectionProfile, DatabaseType};
+use crate::domain::query_history::QueryHistoryScope;
+use crate::domain::{DatabaseMetadata, QueryValue, Table, TableSignatureSnapshot};
+use crate::model::browse::session::ConnectionSaveGuard;
+use crate::ports::outbound::{AccessMode, AppSettings};
+use crate::update::action::{Action, ConnectionTarget};
 
 #[derive(Debug, Clone)]
 pub enum Effect {
@@ -10,12 +14,13 @@ pub enum Effect {
     SaveAndConnect {
         id: Option<ConnectionId>,
         name: String,
-        host: String,
-        port: u16,
-        database: String,
-        user: String,
-        password: String,
-        ssl_mode: SslMode,
+        config: ConnectionConfig,
+        run_id: u64,
+        run_guard: Arc<ConnectionSaveGuard>,
+    },
+    ProbeMySqlConnection {
+        target: ConnectionTarget,
+        run_id: u64,
     },
     LoadConnectionForEdit {
         id: ConnectionId,
@@ -31,10 +36,11 @@ pub enum Effect {
         profile: Box<ConnectionProfile>,
     },
 
-    CacheInvalidate {
-        dsn: String,
-    },
     FetchMetadata {
+        dsn: String,
+        run_id: u64,
+    },
+    FetchEffectiveUser {
         dsn: String,
         run_id: u64,
     },
@@ -47,13 +53,13 @@ pub enum Effect {
         run_id: u64,
     },
     // Only caches in completion_engine, does NOT update state.table_detail
-    PrefetchTableDetail {
+    PrefetchTableColumnsAndFks {
         dsn: String,
         run_id: u64,
         schema: String,
         table: String,
     },
-    ProcessPrefetchQueue {
+    SchedulePrefetchQueueProcessing {
         run_id: u64,
     },
     DelayedProcessPrefetchQueue {
@@ -70,43 +76,46 @@ pub enum Effect {
         limit: usize,
         offset: usize,
         target_page: usize,
-        read_only: bool,
     },
     ExecuteAdhoc {
         dsn: String,
         run_id: u64,
         query: String,
-        read_only: bool,
+        access_mode: AccessMode,
     },
     ExecuteExplain {
         dsn: String,
+        database_type: DatabaseType,
+        database_generation: u64,
         run_id: u64,
         query: String,
         source_query: String,
         is_analyze: bool,
-        read_only: bool,
+        access_mode: AccessMode,
     },
     ExecuteWrite {
         dsn: String,
         run_id: u64,
         query: String,
-        read_only: bool,
+        access_mode: AccessMode,
     },
-    CountRowsForExport {
-        dsn: String,
-        run_id: u64,
-        count_query: String,
-        export_query: String,
-        file_name: String,
-        read_only: bool,
-    },
+    CancelConnectionTask,
+    CancelMetadataTasks,
+    CancelSqliteDiagnostics,
+    CancelTrackedTasks,
     ExportCsv {
         dsn: String,
         run_id: u64,
         query: String,
         file_name: String,
+    },
+    ExportCsvFromCache {
+        dsn: String,
+        run_id: u64,
+        file_name: String,
+        columns: Vec<String>,
+        values: Vec<Vec<QueryValue>>,
         row_count: Option<usize>,
-        read_only: bool,
     },
 
     CacheTableInCompletionEngine {
@@ -123,6 +132,7 @@ pub enum Effect {
     TriggerCompletion,
 
     GenerateErDiagramFromCache {
+        run_id: u64,
         total_tables: usize,
         project_name: String,
         target_tables: Vec<String>,
@@ -131,16 +141,23 @@ pub enum Effect {
         failed_tables: Vec<(String, String)>,
     },
     ExtractFkNeighbors {
+        run_id: u64,
         seed_tables: Vec<String>,
     },
     SmartErRefresh {
         dsn: String,
         run_id: u64,
     },
+    SmartErRefreshCacheAndDiff {
+        dsn: String,
+        run_id: u64,
+        new_metadata: Arc<DatabaseMetadata>,
+        signature_snapshot: Arc<TableSignatureSnapshot>,
+    },
 
     CopyToClipboard {
         content: String,
-        on_success: Option<Box<Action>>,
+        on_success: Box<Action>,
         on_failure: Option<Box<Action>>,
     },
     OpenFolder {
@@ -149,16 +166,23 @@ pub enum Effect {
 
     LoadQueryHistory {
         project_name: String,
-        connection_id: crate::domain::ConnectionId,
+        scope: QueryHistoryScope,
     },
 
     SaveSettings {
         settings: AppSettings,
     },
 
-    // Executes effects in order (each awaits before the next),
-    // but spawned async tasks (e.g. FetchMetadata) may complete out of order.
-    Sequence(Vec<Self>),
+    FetchSqliteDiagnosticsCore {
+        dsn: String,
+        run_id: u64,
+    },
+
+    FetchSqliteDiagnosticsQuickCheck {
+        dsn: String,
+        run_id: u64,
+    },
+
     DispatchActions(Vec<Action>),
     SwitchConnection {
         connection_index: usize,

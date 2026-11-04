@@ -1,47 +1,37 @@
+use std::fmt;
 use std::sync::Arc;
 
-use crate::domain::connection::{ConnectionNameError, ConnectionProfile, ServiceEntry};
-use crate::model::connection::error::ConnectionErrorInfo;
+use crate::domain::connection::{
+    ConnectionId, ConnectionProfile, ConnectionProfileError, DatabaseType, ServiceEntry,
+};
+use crate::domain::query_history::{QueryHistoryEntry, QueryHistoryScope};
+use crate::model::app_state::AppState;
+use crate::model::browse::json_detail::JsonDetailMode;
 use crate::model::shared::focused_pane::FocusedPane;
+use crate::model::shared::input_mode::InputMode;
 use crate::model::shared::key_sequence::Prefix;
 use crate::model::sql_editor::completion::CompletionCandidate;
-use crate::policy::write::write_guardrails::WritePreview;
+use crate::policy::{FeatureRequirement, mask_password};
 use crate::ports::outbound::clipboard::ClipboardError;
-use crate::ports::outbound::connection_store::ConnectionStoreError;
-use crate::ports::outbound::folder_opener::FolderOpenError;
-use crate::ports::outbound::query_history::QueryHistoryError;
-use crate::ports::outbound::settings_store::SettingsStoreError;
 use crate::ports::outbound::{AppSettings, DbOperationError};
 use std::collections::HashMap;
 
-use crate::domain::{ConnectionId, DatabaseMetadata, QueryResult, QuerySource, Table};
+use crate::domain::SqliteDiagnosticsSnapshot;
+use crate::domain::{
+    DatabaseDiagnostic, DatabaseMetadata, DiagnosticField, QueryResult, Table,
+    TableSignatureSnapshot,
+};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ConnectionSaveError {
     #[error("{0}")]
-    Validation(#[from] ConnectionNameError),
+    Validation(#[from] ConnectionProfileError),
     #[error("{0}")]
-    Store(#[from] ConnectionStoreError),
+    Store(String),
     #[error("{0}")]
     Metadata(#[from] DbOperationError),
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum ErDiagramError {
-    #[error("{0}")]
-    NoData(String),
-    #[error("{0}")]
-    ExportFailed(String),
-    #[error("Task panicked: {0}")]
-    TaskPanicked(String),
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum ErLogError {
-    #[error("{0}")]
-    Io(String),
-    #[error("{0}")]
-    Config(String),
+    #[error("{error}")]
+    Probe { error: DbOperationError },
 }
 
 pub use crate::model::shared::cursor::CursorMove;
@@ -61,7 +51,8 @@ pub enum ScrollTarget {
     ExplainCompare,
     ExplainConfirm,
     Explorer,
-    JsonbDetail,
+    CellDetail,
+    SqliteDiagnostics,
     RowDetail,
     Cell,
 }
@@ -135,10 +126,13 @@ pub enum InputTarget {
     ErFilter,
     SettingsErBrowser,
     QueryHistoryFilter,
-    JsonbEdit,
-    JsonbSearch,
+    JsonEdit,
+    JsonSearch,
+    CellDetailSearch,
     HelpFilter,
 }
+
+pub use crate::model::shared::text_input::TextKillDirection;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectMotion {
@@ -184,10 +178,12 @@ pub enum ModalKind {
     SqlModal,
     ErTablePicker,
     QueryHistoryPicker,
-    JsonbDetail,
+    JsonDetail,
+    CellDetail,
     RowDetail,
     ConnectionSetup,
     ConnectionSelector,
+    SqliteDiagnostics,
 }
 
 #[derive(Debug, Clone)]
@@ -196,10 +192,17 @@ pub struct SmartErRefreshResult {
     pub run_id: u64,
     pub new_metadata: Arc<DatabaseMetadata>,
     pub stale_tables: Vec<String>,
-    pub added_tables: Vec<String>,
     pub removed_tables: Vec<String>,
     pub missing_in_cache: Vec<String>,
     pub new_signatures: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SmartErRefreshFetched {
+    pub dsn: String,
+    pub run_id: u64,
+    pub new_metadata: Arc<DatabaseMetadata>,
+    pub signature_snapshot: Arc<TableSignatureSnapshot>,
 }
 
 #[derive(Debug, Clone)]
@@ -212,6 +215,7 @@ pub struct SmartErRefreshError {
 
 #[derive(Debug, Clone)]
 pub struct ErDiagramInfo {
+    pub run_id: u64,
     pub path: String,
     pub table_count: usize,
     pub total_tables: usize,
@@ -233,11 +237,40 @@ pub struct TableTarget {
     pub generation: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConnectionTarget {
     pub id: ConnectionId,
     pub dsn: String,
     pub name: String,
+    pub database_type: DatabaseType,
+    pub database: Option<String>,
+}
+
+impl ConnectionTarget {
+    pub fn from_profile(profile: &ConnectionProfile, dsn: String) -> Self {
+        Self {
+            id: profile.id.clone(),
+            dsn,
+            name: profile.display_name().to_string(),
+            database_type: profile.database_type(),
+            database: profile
+                .mysql_config()
+                .and_then(|config| config.database.clone()),
+        }
+    }
+}
+
+impl fmt::Debug for ConnectionTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ConnectionTarget")
+            .field("id", &self.id)
+            .field("dsn", &mask_password(&self.dsn))
+            .field("name", &self.name)
+            .field("database_type", &self.database_type)
+            .field("database", &self.database)
+            .finish()
+    }
 }
 
 // Full Action equality is intentionally unavailable: some payloads carry
@@ -248,6 +281,18 @@ pub struct ConnectionTarget {
 // setup -> DB structure -> SQL -> query results -> result derivatives.
 // Product groups follow the object in the action sentence, not UI/reducer names
 // (e.g., MetadataLoaded -> Database structure, QueryCompleted -> Query results).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryCompletionContext {
+    Adhoc,
+    Preview { generation: u64, target_page: usize },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryFailureContext {
+    Adhoc,
+    Preview { generation: u64 },
+}
+
 #[derive(Debug, Clone)]
 pub enum Action {
     // App shell
@@ -277,10 +322,19 @@ pub enum Action {
     TextDelete {
         target: InputTarget,
     },
+    TextKill {
+        target: InputTarget,
+        direction: TextKillDirection,
+    },
+    TextYank {
+        target: InputTarget,
+    },
     TextMoveCursor {
         target: InputTarget,
         direction: CursorMove,
     },
+    EnterHelpFilter,
+    ExitHelpFilter,
     Select(SelectMotion),
     ListSelect {
         target: ListTarget,
@@ -310,7 +364,6 @@ pub enum Action {
     SwitchToLastConnection,
     ConnectionsLoaded(ConnectionsLoadedPayload),
     ConfirmConnectionSelection,
-    StartEditConnection(ConnectionId),
     ConnectionSetupNextField,
     ConnectionSetupPrevField,
     ConnectionSetupToggleDropdown,
@@ -320,28 +373,56 @@ pub enum Action {
     ConnectionSetupDropdownCancel,
     ConnectionSetupSave,
     ConnectionSetupCancel,
-    ConnectionSaveCompleted(ConnectionTarget),
-    ConnectionSaveFailed(ConnectionSaveError),
+    ConnectionSaveCompleted {
+        target: ConnectionTarget,
+        run_id: u64,
+        mysql_lower_case_table_names: Option<u8>,
+        metadata: Option<Arc<DatabaseMetadata>>,
+    },
+    ConnectionSaveFailed {
+        error: ConnectionSaveError,
+        run_id: u64,
+    },
+    MySqlConnectionProbeCompleted {
+        target: ConnectionTarget,
+        run_id: u64,
+        lower_case_table_names: u8,
+    },
+    MySqlConnectionProbeFailed {
+        target: ConnectionTarget,
+        run_id: u64,
+        error: DbOperationError,
+    },
     ConnectionEditLoaded(Box<ConnectionProfile>),
-    ConnectionEditLoadFailed(ConnectionStoreError),
-    ShowConnectionError(ConnectionErrorInfo),
+    ConnectionEditLoadFailed(String),
     CloseConnectionError,
     ToggleConnectionErrorDetails,
     CopyConnectionError,
     ConnectionErrorCopied,
     ReenterConnectionSetup,
-    RetryServiceConnection,
+    RetryConnection,
     RequestDeleteSelectedConnection,
     DeleteConnection(ConnectionId),
     ConnectionDeleted(ConnectionId),
-    ConnectionDeleteFailed(ConnectionStoreError),
+    ConnectionDeleteFailed(String),
     RequestDuplicateSelectedConnection,
     DuplicateConnection(ConnectionId),
     ConnectionDuplicated(ConnectionId),
-    DuplicateConnectionFailed(ConnectionSaveError),
+    DuplicateConnectionFailed(String),
     RequestEditSelectedConnection,
     RequestUndoConnectionDelete,
     ConnectionUndo(ConnectionId),
+
+    // SQLite diagnostics
+    RunSqliteDiagnosticsQuickCheck,
+    SqliteDiagnosticsCoreLoaded {
+        run_id: u64,
+        snapshot: Box<SqliteDiagnosticsSnapshot>,
+    },
+    SqliteDiagnosticsQuickCheckLoaded {
+        run_id: u64,
+        quick_check: DiagnosticField,
+    },
 
     // Settings
     SettingsSelectNext,
@@ -355,32 +436,26 @@ pub enum Action {
     SettingsApply,
     SettingsCancel,
     SettingsSaved(AppSettings),
-    SettingsSaveFailed(SettingsStoreError),
+    SettingsSaveFailed(String),
 
     // Database structure
-    LoadMetadata,
     ReloadMetadata,
     MetadataLoaded {
-        dsn: String,
         run_id: u64,
         metadata: Arc<DatabaseMetadata>,
     },
     MetadataFailed {
-        dsn: String,
         run_id: u64,
         error: DbOperationError,
     },
-    LoadTableDetail(TableTarget),
+    EffectiveUserLoaded {
+        run_id: u64,
+        effective_user: Option<String>,
+    },
     TableDetailLoaded {
         dsn: String,
         run_id: u64,
-        detail: Box<Table>,
-        generation: u64,
-    },
-    TableDetailFailed {
-        dsn: String,
-        run_id: u64,
-        error: DbOperationError,
+        outcome: Result<Box<Table>, DbOperationError>,
         generation: u64,
     },
     PrefetchTableDetail {
@@ -393,7 +468,7 @@ pub enum Action {
         run_id: u64,
         schema: String,
         table: String,
-        detail: Box<Table>,
+        detail: Option<Box<Table>>,
     },
     TableDetailCacheFailed {
         dsn: String,
@@ -402,18 +477,15 @@ pub enum Action {
         table: String,
         error: DbOperationError,
     },
-    TableDetailAlreadyCached {
-        dsn: String,
-        run_id: u64,
-        schema: String,
-        table: String,
-    },
-    StartPrefetchAll,
-    StartPrefetchScoped {
+    StartErPrefetchAll,
+    StartErPrefetchScoped {
         tables: Vec<String>,
     },
-    ExpandPrefetchWithFkNeighbors,
+    StartCompletionPrefetch {
+        tables: Vec<String>,
+    },
     FkNeighborsDiscovered {
+        run_id: u64,
         tables: Vec<String>,
     },
     ProcessPrefetchQueue {
@@ -429,7 +501,7 @@ pub enum Action {
     SqlModalYank,
     SqlModalYankSuccess,
     SqlModalNewLine,
-    SqlModalTab,
+    SqlModalInsertTab,
     SqlModalSubmit,
     SqlModalClear,
     SqlModalCancelConfirm,
@@ -441,6 +513,10 @@ pub enum Action {
         candidates: Vec<CompletionCandidate>,
         trigger_position: usize,
         visible: bool,
+        dsn: Option<String>,
+        connection_generation: u64,
+        database_generation: u64,
+        metadata_generation: u64,
     },
     CompletionAccept,
     CompletionDismiss,
@@ -453,7 +529,8 @@ pub enum Action {
     ExplainAnalyzeConfirm,
     ExplainAnalyzeCancel,
     ExplainCompleted {
-        dsn: String,
+        database_type: DatabaseType,
+        database_generation: u64,
         run_id: u64,
         query: String,
         plan_text: String,
@@ -461,37 +538,34 @@ pub enum Action {
         execution_time_ms: u64,
     },
     ExplainFailed {
-        dsn: String,
+        database_generation: u64,
         run_id: u64,
         error: DbOperationError,
+        is_analyze: bool,
     },
     CompareEditQuery,
 
     // Query results
     ExecutePreview(TableTarget),
-    ExecuteAdhoc(String),
-    ExecuteWrite(String),
     QueryCompleted {
-        dsn: String,
         run_id: u64,
         result: Arc<QueryResult>,
-        generation: u64,
-        target_page: Option<usize>,
+        context: QueryCompletionContext,
     },
     QueryFailed {
-        dsn: String,
         run_id: u64,
         error: DbOperationError,
+        context: QueryFailureContext,
+    },
+    RevealPendingPreview {
         generation: u64,
-        source: QuerySource,
     },
     ExecuteWriteSucceeded {
-        dsn: String,
         run_id: u64,
         affected_rows: usize,
+        diagnostics: Vec<DatabaseDiagnostic>,
     },
     ExecuteWriteFailed {
-        dsn: String,
         run_id: u64,
         error: DbOperationError,
     },
@@ -517,66 +591,54 @@ pub enum Action {
     StageRowForDelete,
     UnstageLastStagedRow,
     ClearStagedDeletes,
-    RequestDeleteActiveRow,
     ResultEnterCellEdit,
+    ResultOpenCellDetail,
     ResultCancelCellEdit,
     ResultDiscardCellEdit,
     SubmitCellEditWrite,
-    OpenWritePreviewConfirm(Box<WritePreview>),
     CopyFailed(ClipboardError),
-    OpenFolderFailed(FolderOpenError),
+    OpenFolderFailed(Arc<std::io::Error>),
     ToggleFocus,
     ToggleReadOnly,
     ToggleLowScroll,
 
     // Query history
-    QueryHistoryLoaded(
-        crate::domain::ConnectionId,
-        Vec<crate::domain::query_history::QueryHistoryEntry>,
-    ),
-    QueryHistoryLoadFailed(crate::domain::ConnectionId, QueryHistoryError),
-    QueryHistoryAppendFailed(QueryHistoryError),
+    QueryHistoryLoaded(QueryHistoryScope, Vec<QueryHistoryEntry>),
+    QueryHistoryLoadFailed(QueryHistoryScope, String),
     QueryHistoryConfirmSelection,
 
     // CSV export
     RequestCsvExport,
-    CsvExportRowsCounted {
-        dsn: String,
-        run_id: u64,
-        row_count: Option<usize>,
-        export_query: String,
-        file_name: String,
-    },
-    ExecuteCsvExport {
-        dsn: String,
-        run_id: u64,
-        export_query: String,
-        file_name: String,
-        row_count: Option<usize>,
-    },
     CsvExportSucceeded {
-        dsn: String,
         run_id: u64,
         path: String,
         row_count: Option<usize>,
     },
     CsvExportFailed {
-        dsn: String,
         run_id: u64,
         error: DbOperationError,
     },
 
-    // JSONB detail
-    JsonbYankAll,
-    JsonbYankSuccess,
-    JsonbEnterEdit,
-    JsonbAppendInsert,
-    JsonbExitEdit,
-    JsonbEnterSearch,
-    JsonbExitSearch,
-    JsonbSearchNext,
-    JsonbSearchPrev,
-    JsonbSearchSubmit,
+    // JSON detail
+    JsonYankAll,
+    JsonYankSuccess,
+    JsonEnterEdit,
+    JsonAppendInsert,
+    JsonExitEdit,
+    JsonEnterSearch,
+    JsonExitSearch,
+    JsonSearchNext,
+    JsonSearchPrev,
+    JsonSearchSubmit,
+
+    // Cell detail
+    CellDetailYankAll,
+    CellDetailYankSuccess,
+    CellDetailEnterSearch,
+    CellDetailExitSearch,
+    CellDetailSearchNext,
+    CellDetailSearchPrev,
+    CellDetailSearchSubmit,
 
     // Row Detail
     RowDetailYank,
@@ -589,11 +651,15 @@ pub enum Action {
     ErConfirmSelection,
     ErOpenDiagram,
     ErGenerateFromCache,
+    SmartErRefreshFetched(SmartErRefreshFetched),
     SmartErRefreshCompleted(SmartErRefreshResult),
     SmartErRefreshFailed(SmartErRefreshError),
     ErDiagramOpened(ErDiagramInfo),
-    ErDiagramFailed(ErDiagramError),
-    ErLogWriteFailed(ErLogError),
+    ErDiagramFailed {
+        run_id: u64,
+        error: String,
+    },
+    ErLogWriteFailed(String),
 }
 
 impl Action {
@@ -604,12 +670,237 @@ impl Action {
     pub fn is_scroll(&self) -> bool {
         matches!(self, Self::Scroll { .. })
     }
+
+    pub fn feature_requirement(&self) -> FeatureRequirement {
+        use FeatureRequirement::{
+            ErDiagram, Explain, ExplainAnalyze, JsonDocumentDetail, JsonDocumentEdit, None,
+            PlanComparison, SqliteDiagnostics,
+        };
+
+        match self {
+            Self::OpenModal(ModalKind::ErTablePicker)
+            | Self::ToggleModal(ModalKind::ErTablePicker)
+            | Self::ErToggleSelection
+            | Self::ErSelectAll
+            | Self::ErConfirmSelection
+            | Self::ErOpenDiagram
+            | Self::ErGenerateFromCache
+            | Self::SmartErRefreshFetched(_)
+            | Self::SmartErRefreshCompleted(_)
+            | Self::SmartErRefreshFailed(_)
+            | Self::ErDiagramOpened(_)
+            | Self::ErDiagramFailed { .. }
+            | Self::ErLogWriteFailed(_)
+            | Self::TextInput {
+                target: InputTarget::ErFilter,
+                ..
+            }
+            | Self::TextBackspace {
+                target: InputTarget::ErFilter,
+            }
+            | Self::TextDelete {
+                target: InputTarget::ErFilter,
+            }
+            | Self::TextKill {
+                target: InputTarget::ErFilter,
+                ..
+            }
+            | Self::TextYank {
+                target: InputTarget::ErFilter,
+            }
+            | Self::TextMoveCursor {
+                target: InputTarget::ErFilter,
+                ..
+            }
+            | Self::ListSelect {
+                target: ListTarget::ErTablePicker,
+                ..
+            } => ErDiagram,
+            Self::OpenModal(ModalKind::SqliteDiagnostics)
+            | Self::ToggleModal(ModalKind::SqliteDiagnostics)
+            | Self::RunSqliteDiagnosticsQuickCheck
+            | Self::SqliteDiagnosticsCoreLoaded { .. }
+            | Self::SqliteDiagnosticsQuickCheckLoaded { .. }
+            | Self::Scroll {
+                target: ScrollTarget::SqliteDiagnostics,
+                ..
+            } => SqliteDiagnostics,
+            Self::OpenModal(ModalKind::JsonDetail)
+            | Self::ToggleModal(ModalKind::JsonDetail)
+            | Self::JsonYankAll
+            | Self::JsonYankSuccess
+            | Self::JsonEnterSearch
+            | Self::JsonExitSearch
+            | Self::JsonSearchNext
+            | Self::JsonSearchPrev
+            | Self::JsonSearchSubmit
+            | Self::TextInput {
+                target: InputTarget::JsonSearch,
+                ..
+            }
+            | Self::TextBackspace {
+                target: InputTarget::JsonSearch,
+            }
+            | Self::TextDelete {
+                target: InputTarget::JsonSearch,
+            }
+            | Self::TextKill {
+                target: InputTarget::JsonSearch,
+                ..
+            }
+            | Self::TextYank {
+                target: InputTarget::JsonSearch,
+            }
+            | Self::TextMoveCursor {
+                target: InputTarget::JsonEdit | InputTarget::JsonSearch,
+                ..
+            } => JsonDocumentDetail,
+            Self::JsonEnterEdit
+            | Self::JsonAppendInsert
+            | Self::JsonExitEdit
+            | Self::TextInput {
+                target: InputTarget::JsonEdit,
+                ..
+            }
+            | Self::TextBackspace {
+                target: InputTarget::JsonEdit,
+            }
+            | Self::TextDelete {
+                target: InputTarget::JsonEdit,
+            }
+            | Self::TextKill {
+                target: InputTarget::JsonEdit,
+                ..
+            }
+            | Self::TextYank {
+                target: InputTarget::JsonEdit,
+            } => JsonDocumentEdit,
+            Self::ExplainRequest
+            | Self::Scroll {
+                target: ScrollTarget::ExplainPlan,
+                ..
+            }
+            | Self::ExplainCompleted {
+                is_analyze: false, ..
+            }
+            | Self::ExplainFailed {
+                is_analyze: false, ..
+            } => Explain,
+            Self::ExplainAnalyzeRequest
+            | Self::ExplainAnalyzeConfirm
+            | Self::ExplainAnalyzeCancel
+            | Self::TextInput {
+                target: InputTarget::SqlModalAnalyzeHighRisk,
+                ..
+            }
+            | Self::TextBackspace {
+                target: InputTarget::SqlModalAnalyzeHighRisk,
+            }
+            | Self::TextDelete {
+                target: InputTarget::SqlModalAnalyzeHighRisk,
+            }
+            | Self::TextKill {
+                target: InputTarget::SqlModalAnalyzeHighRisk,
+                ..
+            }
+            | Self::TextYank {
+                target: InputTarget::SqlModalAnalyzeHighRisk,
+            }
+            | Self::TextMoveCursor {
+                target: InputTarget::SqlModalAnalyzeHighRisk,
+                ..
+            }
+            | Self::Scroll {
+                target: ScrollTarget::ExplainConfirm,
+                ..
+            }
+            | Self::ExplainCompleted {
+                is_analyze: true, ..
+            }
+            | Self::ExplainFailed {
+                is_analyze: true, ..
+            } => ExplainAnalyze,
+            Self::CompareEditQuery
+            | Self::Scroll {
+                target: ScrollTarget::ExplainCompare,
+                ..
+            } => PlanComparison,
+            _ => None,
+        }
+    }
+
+    pub fn feature_requirement_for_state(&self, state: &AppState) -> FeatureRequirement {
+        match self {
+            Self::JsonExitEdit if state.input_mode() == InputMode::JsonEdit => {
+                FeatureRequirement::None
+            }
+            Self::JsonExitSearch
+                if state.input_mode() == InputMode::JsonDetail
+                    && state.json_detail.mode() == JsonDetailMode::Searching =>
+            {
+                FeatureRequirement::None
+            }
+            Self::Paste(_) => match state.input_mode() {
+                InputMode::ErTablePicker => FeatureRequirement::ErDiagram,
+                InputMode::JsonDetail => FeatureRequirement::JsonDocumentDetail,
+                InputMode::JsonEdit => FeatureRequirement::JsonDocumentEdit,
+                _ => FeatureRequirement::None,
+            },
+            Self::BeginKeySequence(Prefix::G)
+                if matches!(
+                    state.input_mode(),
+                    InputMode::JsonDetail | InputMode::JsonEdit
+                ) =>
+            {
+                FeatureRequirement::JsonDocumentDetail
+            }
+            _ => self.feature_requirement(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::connection::MySqlSslMode;
     use rstest::rstest;
+
+    #[test]
+    fn connection_target_from_profile_preserves_profile_mapping() {
+        let profile = ConnectionProfile::new_mysql(
+            "MySQL",
+            "localhost",
+            3306,
+            Some("app".to_string()),
+            "user",
+            "password",
+            MySqlSslMode::Required,
+        )
+        .unwrap();
+        let target = ConnectionTarget::from_profile(&profile, "mysql://dsn".to_string());
+
+        assert_eq!(target.id, profile.id);
+        assert_eq!(target.dsn, "mysql://dsn");
+        assert_eq!(target.name, profile.display_name());
+        assert_eq!(target.database_type, profile.database_type());
+        assert_eq!(target.database.as_deref(), Some("app"));
+    }
+
+    #[test]
+    fn connection_target_debug_masks_mysql_password() {
+        let target = ConnectionTarget {
+            id: ConnectionId::from_string("mysql"),
+            dsn: "mysql://user:secret@localhost:3306/app".to_string(),
+            name: "MySQL".to_string(),
+            database_type: DatabaseType::MySQL,
+            database: Some("app".to_string()),
+        };
+
+        let debug = format!("{target:?}");
+
+        assert!(!debug.contains("secret"));
+        assert!(debug.contains("mysql://user:****@localhost"));
+    }
 
     #[test]
     fn scroll_action_returns_true() {
@@ -631,6 +922,86 @@ mod tests {
     })]
     fn non_scroll_action_returns_false(#[case] action: Action) {
         assert!(!action.is_scroll());
+    }
+
+    #[test]
+    fn completion_actions_keep_feature_requirements() {
+        assert_eq!(
+            Action::ExplainCompleted {
+                database_type: DatabaseType::PostgreSQL,
+                database_generation: 0,
+                run_id: 1,
+                query: "SELECT 1".to_string(),
+                plan_text: "plan".to_string(),
+                is_analyze: true,
+                execution_time_ms: 1,
+            }
+            .feature_requirement(),
+            FeatureRequirement::ExplainAnalyze
+        );
+        assert_eq!(
+            Action::ExplainFailed {
+                database_generation: 0,
+                run_id: 1,
+                error: DbOperationError::QueryFailed("error".to_string()),
+                is_analyze: false,
+            }
+            .feature_requirement(),
+            FeatureRequirement::Explain
+        );
+        assert_eq!(
+            Action::SqliteDiagnosticsCoreLoaded {
+                run_id: 1,
+                snapshot: Box::new(SqliteDiagnosticsSnapshot::default()),
+            }
+            .feature_requirement(),
+            FeatureRequirement::SqliteDiagnostics
+        );
+        assert_eq!(
+            Action::ExplainAnalyzeCancel.feature_requirement(),
+            FeatureRequirement::ExplainAnalyze
+        );
+        assert_eq!(
+            Action::Scroll {
+                target: ScrollTarget::ExplainCompare,
+                direction: ScrollDirection::Down,
+                amount: ScrollAmount::Line,
+            }
+            .feature_requirement(),
+            FeatureRequirement::PlanComparison
+        );
+        assert_eq!(
+            Action::TextInput {
+                target: InputTarget::SqlModalAnalyzeHighRisk,
+                ch: 'x',
+            }
+            .feature_requirement(),
+            FeatureRequirement::ExplainAnalyze
+        );
+    }
+
+    #[test]
+    fn json_cleanup_actions_are_allowed_on_preserved_surfaces() {
+        let mut edit_state = AppState::new("test".to_string());
+        edit_state.modal.set_mode(InputMode::JsonEdit);
+        assert_eq!(
+            Action::JsonExitEdit.feature_requirement_for_state(&edit_state),
+            FeatureRequirement::None
+        );
+
+        let mut search_state = AppState::new("test".to_string());
+        search_state.modal.set_mode(InputMode::JsonDetail);
+        search_state.json_detail.enter_search();
+        assert_eq!(
+            Action::JsonExitSearch.feature_requirement_for_state(&search_state),
+            FeatureRequirement::None
+        );
+
+        let normal_state = AppState::new("test".to_string());
+        assert_eq!(
+            Action::JsonExitEdit.feature_requirement_for_state(&normal_state),
+            FeatureRequirement::JsonDocumentEdit
+        );
     }
 
     mod shared_scroll_helpers {

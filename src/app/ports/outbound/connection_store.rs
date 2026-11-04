@@ -1,7 +1,6 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::domain::connection::{ConnectionId, ConnectionNameError, ConnectionProfile};
+use crate::domain::connection::{ConnectionId, ConnectionProfile, ConnectionProfileError};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ConnectionStoreError {
@@ -14,7 +13,7 @@ pub enum ConnectionStoreError {
     #[error("TOML deserialize error: {0}")]
     TomlDeserialize(#[source] Arc<toml::de::Error>),
     #[error("Invalid profile: {0}")]
-    InvalidProfile(#[source] ConnectionNameError),
+    InvalidProfile(#[source] ConnectionProfileError),
     #[error("Connection name already exists: {0}")]
     DuplicateName(String),
     #[error("Connection not found: {0}")]
@@ -41,11 +40,7 @@ impl From<toml::de::Error> for ConnectionStoreError {
 
 #[cfg_attr(test, mockall::automock)]
 pub trait ConnectionStore: Send + Sync {
-    fn load(&self) -> Result<Option<ConnectionProfile>, ConnectionStoreError>;
-
     fn save(&self, profile: &ConnectionProfile) -> Result<(), ConnectionStoreError>;
-
-    fn storage_path(&self) -> PathBuf;
 
     fn load_all(&self) -> Result<Vec<ConnectionProfile>, ConnectionStoreError>;
 
@@ -57,11 +52,11 @@ pub trait ConnectionStore: Send + Sync {
     fn delete(&self, id: &ConnectionId) -> Result<(), ConnectionStoreError>;
 
     /// Duplicate a connection, returning the newly created profile.
-    fn duplicate(
-        &self,
-        id: &ConnectionId,
-    ) -> Result<ConnectionProfile, ConnectionStoreError>;
+    fn duplicate(&self, id: &ConnectionId) -> Result<ConnectionProfile, ConnectionStoreError>;
 
-    /// Save the last connection ID to a temporary file for quick reconnection.
+    /// Persist the last-used connection ID for quick reconnection.
     fn save_last_connection_id(&self, id: &ConnectionId) -> Result<(), ConnectionStoreError>;
+
+    /// Load the last-used connection ID, if one was saved.
+    fn load_last_connection_id(&self) -> Result<Option<ConnectionId>, ConnectionStoreError>;
 }

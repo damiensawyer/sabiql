@@ -1,37 +1,26 @@
-use tokio::sync::mpsc;
-
-use crate::cmd::effect::Effect;
-use crate::ports::outbound::SettingsStore;
+use crate::ports::outbound::{AppSettings, SettingsStore};
 use crate::update::action::Action;
 
-pub(crate) async fn run(
-    effect: Effect,
-    action_tx: &mpsc::Sender<Action>,
+pub(in crate::cmd) fn run(
+    settings: AppSettings,
     settings_store: &std::sync::Arc<dyn SettingsStore>,
-) {
-    let Effect::SaveSettings { settings } = effect else {
-        return;
-    };
-
+) -> Action {
     let result = settings_store.save(settings.clone());
-    let action = match result {
+    match result {
         Ok(()) => Action::SettingsSaved(settings),
-        Err(error) => Action::SettingsSaveFailed(error),
-    };
-    let _ = action_tx.send(action).await;
+        Err(error) => Action::SettingsSaveFailed(error.to_string()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use tokio::sync::mpsc;
-
     use super::*;
     use crate::model::shared::low_scroll::LowScrollSettings;
     use crate::model::shared::settings::KeymapPreset;
     use crate::model::shared::theme_id::ThemeId;
-    use crate::ports::outbound::{AppSettings, SettingsStoreError};
+    use crate::ports::outbound::SettingsStoreError;
 
     struct RecordingSettingsStore {
         saved: Mutex<Vec<AppSettings>>,
@@ -40,10 +29,6 @@ mod tests {
     struct FailingSettingsStore;
 
     impl SettingsStore for RecordingSettingsStore {
-        fn load(&self) -> Result<AppSettings, SettingsStoreError> {
-            Ok(AppSettings::default())
-        }
-
         fn save(&self, settings: AppSettings) -> Result<(), SettingsStoreError> {
             self.saved.lock().unwrap().push(settings);
             Ok(())
@@ -51,10 +36,6 @@ mod tests {
     }
 
     impl SettingsStore for FailingSettingsStore {
-        fn load(&self) -> Result<AppSettings, SettingsStoreError> {
-            Ok(AppSettings::default())
-        }
-
         fn save(&self, _settings: AppSettings) -> Result<(), SettingsStoreError> {
             Err(SettingsStoreError::Io(Arc::new(std::io::Error::other(
                 "disk full",
@@ -62,26 +43,21 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn save_settings_dispatches_saved_action() {
+    #[test]
+    fn save_settings_dispatches_saved_action() {
         let store = Arc::new(RecordingSettingsStore {
             saved: Mutex::new(Vec::new()),
         });
-        let (tx, mut rx) = mpsc::channel(1);
 
-        run(
-            Effect::SaveSettings {
-                settings: AppSettings {
-                    theme_id: ThemeId::Light,
-                    keymap_preset: KeymapPreset::Ide,
-                    er_browser: Some("Firefox".to_string()),
-                    low_scroll: LowScrollSettings::default(),
-                },
+        let action = run(
+            AppSettings {
+                theme_id: ThemeId::Light,
+                keymap_preset: KeymapPreset::Ide,
+                er_browser: Some("Firefox".to_string()),
+                low_scroll: LowScrollSettings::default(),
             },
-            &tx,
             &(store.clone() as Arc<dyn SettingsStore>),
-        )
-        .await;
+        );
 
         assert_eq!(store.saved.lock().unwrap()[0].theme_id, ThemeId::Light);
         assert_eq!(
@@ -93,36 +69,31 @@ mod tests {
             KeymapPreset::Ide
         );
         assert!(matches!(
-            rx.recv().await,
-            Some(Action::SettingsSaved(settings))
+            action,
+            Action::SettingsSaved(settings)
                 if settings.theme_id == ThemeId::Light
                     && settings.keymap_preset == KeymapPreset::Ide
                     && settings.er_browser.as_deref() == Some("Firefox")
         ));
     }
 
-    #[tokio::test]
-    async fn save_settings_dispatches_save_failed_action() {
+    #[test]
+    fn save_settings_dispatches_save_failed_action() {
         let store = Arc::new(FailingSettingsStore);
-        let (tx, mut rx) = mpsc::channel(1);
 
-        run(
-            Effect::SaveSettings {
-                settings: AppSettings {
-                    theme_id: ThemeId::Light,
-                    keymap_preset: KeymapPreset::default(),
-                    er_browser: None,
-                    low_scroll: LowScrollSettings::default(),
-                },
+        let action = run(
+            AppSettings {
+                theme_id: ThemeId::Light,
+                keymap_preset: KeymapPreset::default(),
+                er_browser: None,
+                low_scroll: LowScrollSettings::default(),
             },
-            &tx,
             &(store as Arc<dyn SettingsStore>),
-        )
-        .await;
+        );
 
         assert!(matches!(
-            rx.recv().await,
-            Some(Action::SettingsSaveFailed(_))
+            action,
+            Action::SettingsSaveFailed(error) if error == "I/O error: disk full"
         ));
     }
 }

@@ -8,26 +8,11 @@ use crate::theme::ThemePalette;
 pub struct FooterHintItem {
     key: &'static str,
     desc: &'static str,
-    disabled: bool,
 }
 
 impl FooterHintItem {
     pub const fn new(key: &'static str, desc: &'static str) -> Self {
-        Self { key, desc, disabled: false }
-    }
-
-    pub const fn disabled(mut self) -> Self {
-        self.disabled = true;
-        self
-    }
-
-    pub fn from_hint_tuple(hint: (&'static str, &'static str, bool)) -> Self {
-        let (key, desc, disabled) = hint;
-        if disabled {
-            Self::new(key, desc).disabled()
-        } else {
-            Self::new(key, desc)
-        }
+        Self { key, desc }
     }
 
     fn width(self) -> usize {
@@ -38,22 +23,6 @@ impl FooterHintItem {
 impl From<(&'static str, &'static str)> for FooterHintItem {
     fn from((key, desc): (&'static str, &'static str)) -> Self {
         Self::new(key, desc)
-    }
-}
-
-impl From<(&'static str, &'static str, bool)> for FooterHintItem {
-    fn from((key, desc, disabled): (&'static str, &'static str, bool)) -> Self {
-        if disabled {
-            Self::new(key, desc).disabled()
-        } else {
-            Self::new(key, desc)
-        }
-    }
-}
-
-impl FooterHintItem {
-    pub fn disabled_hint(key: &'static str, desc: &'static str) -> Self {
-        Self::new(key, desc).disabled()
     }
 }
 
@@ -109,15 +78,10 @@ impl FooterHintBar {
             if i > 0 {
                 spans.push(Span::styled(" │ ", theme.modal_hint_style()));
             }
-            let style = if item.disabled {
-                Style::default().fg(theme.semantic.text.muted)
-            } else {
-                theme.modal_hint_style()
-            };
-            spans.push(Span::styled(item.key.to_string(), theme.semantic.text.accent));
+            spans.push(key_text(item.key, theme));
             spans.push(Span::styled(
                 format!(": {}", item.desc),
-                style,
+                theme.modal_hint_style(),
             ));
         }
         spans.push(Span::styled(" ", theme.modal_hint_style()));
@@ -145,14 +109,6 @@ impl FooterHintBar {
     }
 }
 
-/// A hint tuple where the bool indicates if the hint is disabled (grayed out)
-pub type HintTuple = (&'static str, &'static str, bool);
-
-/// Helper to convert (&str, &str) -> HintTuple with disabled=false
-pub fn active_hint(key: &'static str, desc: &'static str) -> HintTuple {
-    (key, desc, false)
-}
-
 pub fn hint_line(hints: &[(&str, &str)], theme: &ThemePalette) -> Line<'static> {
     let mut spans = Vec::new();
 
@@ -162,28 +118,6 @@ pub fn hint_line(hints: &[(&str, &str)], theme: &ThemePalette) -> Line<'static> 
         }
         spans.push(key_text(key, theme));
         spans.push(Span::raw(format!(":{desc}")));
-    }
-
-    Line::from(spans)
-}
-
-pub fn hint_line_with_disabled(hints: &[HintTuple], theme: &ThemePalette) -> Line<'static> {
-    let mut spans = Vec::new();
-
-    for (i, (key, desc, disabled)) in hints.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw("  "));
-        }
-        spans.push(Span::styled(
-            key.to_string(),
-            theme.semantic.text.accent,
-        ));
-        let desc_style = if *disabled {
-            Style::default().fg(theme.semantic.text.muted)
-        } else {
-            theme.modal_hint_style()
-        };
-        spans.push(Span::styled(format!(":{desc}"), desc_style));
     }
 
     Line::from(spans)

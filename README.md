@@ -1,7 +1,7 @@
 # sabiql
 ![hero](https://github.com/user-attachments/assets/745ab18f-915c-4017-81a6-465c5c5ee11c)
 
-A fast, driver-less TUI to browse, query, and edit PostgreSQL databases — no drivers, no setup, just `psql`.
+Fast, safe-by-design, Vim-first DB TUI with ER diagrams.
 
 [![CI](https://github.com/riii111/sabiql/actions/workflows/ci.yml/badge.svg)](https://github.com/riii111/sabiql/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -10,50 +10,44 @@ A fast, driver-less TUI to browse, query, and edit PostgreSQL databases — no d
 
 > Vim-first · Safe by design · Oil-and-vinegar UI · Fast and lightweight
 
-sabiql wraps your existing `psql` CLI. No Rust database drivers, no connection pools, no extra dependencies. Point it at your database and get a full-featured TUI. Your `psql` config, `.pgpass`, SSL setup all just work.
+sabiql brings database browsing, querying, and editing into the terminal while using the native CLI for each database. PostgreSQL connections can reuse existing libpq connection settings such as `.pgpass`, `pg_service.conf`, and SSL settings.
 
-Inspired by [oil.nvim](https://github.com/stevearc/oil.nvim)'s "oil and vinegar" philosophy: UI elements appear only when needed, never occupying your screen permanently. Vim-native keybindings (`j/k`, `dd`, `/`) let you navigate and edit without leaving your muscle memory.
+Like [oil.nvim](https://github.com/stevearc/oil.nvim), sabiql keeps its interface out of your way. Following oil.nvim's "oil and vinegar" philosophy, UI elements appear only when needed. Vim-native keybindings such as `j/k`, `dd`, and `/` keep navigation and editing familiar.
 
-Destructive operations are guarded. Inline edits and row deletions always show a preview modal before touching your data. Read-only mode (`Ctrl+R`) goes further — block all writes at the PostgreSQL session level with a single keystroke.
-
-Built in Rust for minimal memory footprint and near-zero idle CPU. A full-featured alternative to GUI tools like DBeaver or DataGrip, without ever leaving the terminal.
+Safety follows a plan-before-apply flow familiar from Terraform: inline edits and row deletions show the SQL and its risk level before you confirm the change. Read-only mode (`Ctrl+R`) also blocks writes at the database client level.
 
 ## Features
+
 ![hero_1000_20fps](https://github.com/user-attachments/assets/06e1900d-b044-4f29-a2a8-7d7bab5bd3a1)
 
-### Core
+- **Browse and inspect** — Find tables with fuzzy search, inspect columns, constraints, indexes, foreign keys, triggers, and DDL
+- **Run SQL** — Write ad-hoc queries with completion for tables, columns, and keywords, then recall them from query history
+- **Edit with previews** — Update cells or delete rows only after reviewing the SQL and its risk level
+- **Browse in read-only mode** (`Ctrl+R`) — Block writes while investigating data
+- **Analyze queries** — View and compare PostgreSQL or MySQL execution plans, or inspect SQLite query plans
+- **Work with data** — Copy cell values, export CSV, and inspect or edit PostgreSQL and MySQL JSON documents
+- **Visualize relationships** — Generate PostgreSQL and MySQL ER diagrams with Graphviz and open them in your browser
 
-- **Read-Only Mode** (`Ctrl+R`) — Toggle safe-browse mode; writes are blocked at both app and DB session level
-- **SQL Modal** (`s`) — Ad-hoc queries with auto-completion for tables, columns, and keywords; browse past results with `Ctrl+H`; recall previous queries with `Ctrl+O`
-- **ER Diagram** (`e`) — Generate relationship diagrams via Graphviz, opened instantly in your browser
-- **Inspector Pane** (`2`) — Column details, types, constraints, and indexes for any table
-
-### Editing
-
-- **Inline Cell Editing** (`e` in Result) — Edit cells in-place with a guarded UPDATE preview before committing
-- **Row Deletion** (`dd` in Result) — DELETE with mandatory preview; risk level color-coded (yellow/orange/red)
-- **Yank** (`y`) — Copy any cell value to clipboard
-- **CSV Export** (`Ctrl+E`) — Export query results to a CSV file
-
-### Query Analysis
-
-- **EXPLAIN / EXPLAIN ANALYZE** — Run your query, then switch tabs to instantly view its execution plan. Compare two plans side-by-side to pinpoint performance bottlenecks — no copy-paste, no external tools, all within the same modal.
-
-### Navigation
-
-- **Fuzzy Search** (`/`) — Incremental table filtering
-- **Focus Mode** (`f`) — Expand any pane to full screen
-- **Settings** (`,`) — Theme, keymap, and ER diagram preferences
-- **Command Palette** (`F1`, `:palette`) — Searchable command list
+Press `?` inside sabiql to see all commands and keybindings.
 
 ## Installation
 
 ```bash
 # macOS / Linux
-brew install riii111/sabiql/sabiql
+brew install sabiql
 
 # Cargo (crates.io)
 cargo install sabiql
+
+# Nix
+nix profile install github:riii111/sabiql
+
+# Run once with Nix, without installing
+nix run github:riii111/sabiql
+
+# Windows x86_64 (experimental)
+# Download sabiql-x86_64-pc-windows-msvc.zip from GitHub Releases,
+# extract sabiql.exe, and add its directory to PATH.
 
 # Arch Linux (AUR)
 paru -S sabiql  # or yay -S sabiql
@@ -69,47 +63,35 @@ cd /usr/ports/databases/sabiql/ && make install clean
 curl -fsSL https://raw.githubusercontent.com/riii111/sabiql/main/install.sh | sh
 ```
 
+## Database Setup
+
+sabiql uses the CLI for the database you want to open:
+
+- **To use PostgreSQL:** install `psql`
+- **To use MySQL:** install the Oracle MySQL `mysql` CLI 8.4.x. Oracle MySQL servers 5.7, 8.0, and 8.4 can be connected to; 8.4 is the continuously validated server version and older or newer Oracle server versions are not fully guaranteed.
+- **To use SQLite:** macOS includes `sqlite3` by default. Check that it is version 3.41.1 or later; additional installation is usually unnecessary. On Linux and other platforms, install `sqlite3` version 3.41.1 or later.
+
+Graphviz is required only for PostgreSQL and MySQL ER diagrams. SQLite does not support ER diagrams.
+
+Windows support is experimental.
+
+See [MySQL support and limitations](docs/mysql.md) and [SQLite support and limitations](docs/sqlite.md) for supported versions and database-specific limitations.
+
 ## Quick Start
+
+Launch sabiql and enter your connection details:
 
 ```bash
 sabiql
 ```
 
-On first run, enter your connection details. They are saved to your platform config directory:
-
-- macOS: `~/Library/Application Support/sabiql/connections.toml`
-- Linux: `~/.config/sabiql/connections.toml`
-
-Press `?` for help.
-
-Open Settings with `,` to switch themes, keymap presets, and the ER diagram browser command.
-
-> **Note:** If you use sabiql inside an IDE terminal, some default keybindings may conflict with the IDE. Open Settings with `,` and switch the keymap preset to make sabiql work comfortably inside your IDE.
-
-## Requirements
-
-- `psql` CLI (PostgreSQL client)
-- Graphviz (optional, for ER diagrams): `brew install graphviz`
-
-### Android / Termux
-
-Android/Termux support is build-only, not full platform support. `cargo install sabiql` should compile on Android, but clipboard yank is unavailable because the desktop clipboard backend is not supported there. `psql` is still required.
-
-## Development
-
-With Nix:
+You can also open an existing SQLite database directly:
 
 ```bash
-direnv allow
-cargo nextest run --workspace
-nix build
+sabiql /path/to/app.db
 ```
 
-Without direnv, enter the shell explicitly:
-
-```bash
-nix develop
-```
+Use `Ctrl+R` before browsing data when you want to block writes. Press `?` for help, or open Settings with `,` to change the theme and keymap.
 
 ## Roadmap
 
@@ -122,13 +104,13 @@ nix develop
 - [x] EXPLAIN workflow (plan tree view & comparison)
 - [x] JSON/JSONB support (tree view, editing, validation)
 - [x] Theme switching (Sabiql Dark / Light)
+- [x] SQLite support
+- [x] MySQL support
 - [ ] Neovim integration (`sabiql.nvim`)
-- [ ] SQLite support
-- [ ] Zero-config connection (env vars, `.pgpass`, URI auto-detect)
+- [ ] Connection auto-detection (environment variables, URI)
 - [ ] Google Cloud SQL / AlloyDB support
-- [ ] MySQL support
 
-Have a feature request? [Open an issue](https://github.com/riii111/sabiql/issues/new) feedback is welcome!
+Have a feature request? [Open an issue](https://github.com/riii111/sabiql/issues/new). Feedback is welcome!
 
 ## License
 

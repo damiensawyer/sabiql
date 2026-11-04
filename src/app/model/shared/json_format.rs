@@ -13,6 +13,8 @@ use std::borrow::Cow;
 use serde::Serialize as _;
 use serde_json::Value;
 
+use super::low_scroll::CellText;
+
 /// Maximum number of rows sampled when deciding whether a column is JSON.
 /// Keeps detection cheap on large result sets — a column is either JSON or it
 /// isn't, and the first few rows are representative.
@@ -45,7 +47,7 @@ pub fn is_json_object_or_array(s: &str) -> bool {
 /// `num_columns` sets the result length so callers can zip it with headers
 /// even when rows are ragged.
 #[must_use]
-pub fn detect_json_columns(rows: &[Vec<String>], num_columns: usize) -> Vec<bool> {
+pub fn detect_json_columns<C: CellText>(rows: &[Vec<C>], num_columns: usize) -> Vec<bool> {
     let mut flags = vec![false; num_columns];
 
     let sample = rows.len().min(DETECTION_SAMPLE_ROWS);
@@ -57,14 +59,15 @@ pub fn detect_json_columns(rows: &[Vec<String>], num_columns: usize) -> Vec<bool
         let mut seen_any = false;
         let mut all_json = true;
         for row in rows.iter().take(sample) {
-            let Some(cell) = row.get(col) else {
+            let Some(cell) = row.get(col).filter(|cell| !cell.is_null()) else {
                 continue;
             };
+            let cell = cell.cell_text();
             if cell.trim().is_empty() {
                 continue;
             }
             seen_any = true;
-            if !is_json_object_or_array(cell) {
+            if !is_json_object_or_array(&cell) {
                 all_json = false;
                 break;
             }
@@ -173,7 +176,7 @@ mod tests {
         fn skips_null_cells_so_partial_json_column_still_formats() {
             let rows = vec![
                 vec![r#"{"a":1}"#.to_string()],
-                vec!["".to_string()],
+                vec![String::new()],
                 vec![r#"{"a":2}"#.to_string()],
             ];
 
@@ -183,17 +186,14 @@ mod tests {
         #[test]
         fn mixed_column_is_not_json() {
             // One scalar disqualifies the column.
-            let rows = vec![
-                vec![r#"{"a":1}"#.to_string()],
-                vec!["hello".to_string()],
-            ];
+            let rows = vec![vec![r#"{"a":1}"#.to_string()], vec!["hello".to_string()]];
 
             assert_eq!(detect_json_columns(&rows, 1), vec![false]);
         }
 
         #[test]
         fn all_null_column_is_not_json() {
-            let rows = vec![vec!["".to_string()], vec!["".to_string()]];
+            let rows = vec![vec![String::new()], vec![String::new()]];
 
             assert_eq!(detect_json_columns(&rows, 1), vec![false]);
         }
@@ -210,7 +210,10 @@ mod tests {
 
         #[test]
         fn no_rows_returns_all_false() {
-            assert_eq!(detect_json_columns(&[], 3), vec![false, false, false]);
+            assert_eq!(
+                detect_json_columns::<String>(&[], 3),
+                vec![false, false, false]
+            );
         }
 
         #[test]

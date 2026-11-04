@@ -13,7 +13,10 @@ pub fn is_service_selected(items: &[ConnectionListItem], selected: usize) -> boo
 }
 
 pub fn is_last_connection_selected(items: &[ConnectionListItem], selected: usize) -> bool {
-    matches!(items.get(selected), Some(ConnectionListItem::LastConnection))
+    matches!(
+        items.get(selected),
+        Some(ConnectionListItem::LastConnection)
+    )
 }
 
 pub fn has_last_connection(items: &[ConnectionListItem]) -> bool {
@@ -23,7 +26,10 @@ pub fn has_last_connection(items: &[ConnectionListItem]) -> bool {
 /// Returns the non-last-connection items for rendering in the bottom panel.
 /// Skips the LastConnection item at the front (already shown in top panel).
 pub fn bottom_panel_items(items: &[ConnectionListItem]) -> &[ConnectionListItem] {
-    if items.first().is_some_and(|i| matches!(i, ConnectionListItem::LastConnection)) {
+    if items
+        .first()
+        .is_some_and(|i| matches!(i, ConnectionListItem::LastConnection))
+    {
         &items[1..]
     } else {
         items

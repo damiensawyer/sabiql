@@ -5,22 +5,18 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::app::model::app_state::AppState;
+use crate::app::model::shared::render_output::PickerLayout;
+use crate::app::policy::table_kind::{table_display_name, table_key_display_name};
 use crate::app::update::input::keybindings;
 use crate::domain::er::er_output_filename;
+use crate::primitives::molecules::{FooterHintBar, render_filter_input_line, render_modal};
 use crate::theme::ThemePalette;
-
-use crate::features::pickers::PickerRenderMetrics;
-use crate::primitives::molecules::{FooterHintBar, FooterHintItem, render_filter_input_line, render_modal};
 
 pub struct ErTablePicker;
 
 impl ErTablePicker {
-    pub fn render(
-        frame: &mut Frame,
-        state: &AppState,
-        theme: &ThemePalette,
-    ) -> PickerRenderMetrics {
-        let selected_count = state.ui.er_selected_tables.len();
+    pub fn render(frame: &mut Frame, state: &AppState, theme: &ThemePalette) -> PickerLayout {
+        let selected_count = state.ui.er_selected_tables().len();
         let total_count = state.tables().len();
         let filtered_count = state.er_filtered_tables().len();
 
@@ -37,7 +33,11 @@ impl ErTablePicker {
                 theme.semantic.text.muted,
             )
         } else if selected_count == 1 {
-            let name = state.ui.er_selected_tables.iter().next().unwrap().clone();
+            let name = table_key_display_name(
+                state.session.active_database_type_or_default(),
+                state.session.database_name(),
+                state.ui.er_selected_tables().iter().next().unwrap(),
+            );
             (
                 "Partial ER".to_string(),
                 name,
@@ -54,10 +54,11 @@ impl ErTablePicker {
         let output_label = if selected_count == 0 {
             "—".to_string()
         } else {
-            let selected_vec: Vec<String> = state.ui.er_selected_tables.iter().cloned().collect();
+            let selected_vec: Vec<String> = state.ui.er_selected_tables().iter().cloned().collect();
             er_output_filename(&selected_vec, total_count)
         };
-        let select_all = keybindings::er_picker_select_all(state.settings.saved_keymap_preset());
+        let select_all_hint =
+            keybindings::er_picker_select_all(state.settings.saved_keymap_preset()).as_hint();
 
         let (_, inner) = render_modal(
             frame,
@@ -67,10 +68,10 @@ impl ErTablePicker {
             FooterHintBar::with_prefix(
                 format!("{selected_count}/{total_count} selected"),
                 [
-                    FooterHintItem::new("Space", "Select"),
-                    FooterHintItem::from_hint_tuple(select_all.as_hint()),
-                    FooterHintItem::new("Enter", "Generate"),
-                    FooterHintItem::new("Esc", "Cancel"),
+                    keybindings::er_picker::SELECT.as_hint(),
+                    select_all_hint,
+                    keybindings::er_picker::ENTER_GENERATE.as_hint(),
+                    keybindings::er_picker::ESC_CLOSE.as_hint(),
                 ],
             ),
             theme,
@@ -86,7 +87,7 @@ impl ErTablePicker {
         let visible_width = render_filter_input_line(
             frame,
             filter_area,
-            state.ui.er_picker.filter_input(),
+            state.ui.er_picker().filter_input(),
             None,
             theme,
         );
@@ -123,14 +124,19 @@ impl ErTablePicker {
             .iter()
             .map(|t| {
                 let qn = t.qualified_name();
-                let is_selected = state.ui.er_selected_tables.contains(&qn);
+                let is_selected = state.ui.er_selected_tables().contains(&qn);
                 let mark = if is_selected { "✔ " } else { "  " };
+                let display_name = table_display_name(
+                    state.session.active_database_type_or_default(),
+                    &t.schema,
+                    &t.name,
+                );
                 let style = if is_selected {
                     Style::default().fg(theme.semantic.surface.focus_border)
                 } else {
                     Style::default().fg(theme.semantic.text.secondary)
                 };
-                ListItem::new(format!("  {mark}{qn}")).style(style)
+                ListItem::new(format!("  {mark}{display_name}")).style(style)
             })
             .collect();
 
@@ -139,15 +145,15 @@ impl ErTablePicker {
             .highlight_symbol("▸ ");
 
         let selected = if filtered_count > 0 {
-            Some(state.ui.er_picker.selected())
+            Some(state.ui.er_picker().selected())
         } else {
             None
         };
         let mut list_state = ListState::default()
             .with_selected(selected)
-            .with_offset(state.ui.er_picker.scroll_offset());
+            .with_offset(state.ui.er_picker().scroll_offset());
         frame.render_stateful_widget(list, list_area, &mut list_state);
-        PickerRenderMetrics {
+        PickerLayout {
             pane_height: list_area.height,
             filter_visible_width: visible_width,
         }

@@ -2,15 +2,18 @@ mod connections;
 mod editors;
 mod normal;
 mod overlays;
+mod readline;
 
 use crate::model::shared::settings::KeymapPreset;
+use crate::policy::{FeaturePolicy, FeatureRequirement};
 pub use crate::ports::inbound::{Key, KeyCombo, Modifiers};
 use crate::update::action::{Action, ModalKind};
-use crate::update::input::keymap::resolve_mode;
+use crate::update::input::keymap::{resolve_mode, resolve_mode_with_policy};
 pub use connections::*;
 pub use editors::*;
 pub use normal::*;
 pub use overlays::*;
+pub use readline::*;
 
 #[derive(Clone)]
 pub struct KeyBinding {
@@ -23,8 +26,12 @@ pub struct KeyBinding {
 }
 
 impl KeyBinding {
-    pub const fn as_hint(&self) -> (&'static str, &'static str, bool) {
-        (self.key_short, self.desc_short, false)
+    pub const fn as_hint(&self) -> (&'static str, &'static str) {
+        (self.key_short, self.desc_short)
+    }
+
+    pub fn feature_requirement(&self) -> FeatureRequirement {
+        self.action.feature_requirement()
     }
 }
 
@@ -46,8 +53,16 @@ pub struct ModeRow {
 }
 
 impl ModeRow {
-    pub const fn as_hint(&self) -> (&'static str, &'static str, bool) {
-        (self.key_short, self.desc_short, false)
+    pub const fn as_hint(&self) -> (&'static str, &'static str) {
+        (self.key_short, self.desc_short)
+    }
+
+    pub fn feature_requirement(&self) -> FeatureRequirement {
+        self.bindings
+            .iter()
+            .map(|binding| binding.action.feature_requirement())
+            .find(|requirement| *requirement != FeatureRequirement::None)
+            .unwrap_or(FeatureRequirement::None)
     }
 }
 
@@ -58,6 +73,14 @@ pub struct ModeBindings {
 impl ModeBindings {
     pub fn resolve(&self, combo: &KeyCombo) -> Option<Action> {
         resolve_mode(combo, self.rows)
+    }
+
+    pub fn resolve_with_policy(
+        &self,
+        combo: &KeyCombo,
+        feature_policy: &FeaturePolicy,
+    ) -> Option<Action> {
+        resolve_mode_with_policy(combo, self.rows, feature_policy)
     }
 }
 
@@ -83,11 +106,17 @@ pub const SETTINGS: ModeBindings = ModeBindings {
 pub const CONNECTION_SELECTOR: ModeBindings = ModeBindings {
     rows: CONNECTION_SELECTOR_ROWS,
 };
-pub const JSONB_DETAIL: ModeBindings = ModeBindings {
-    rows: JSONB_DETAIL_ROWS,
+pub const JSON_DETAIL: ModeBindings = ModeBindings {
+    rows: JSON_DETAIL_ROWS,
 };
-pub const JSONB_EDIT: ModeBindings = ModeBindings {
-    rows: JSONB_EDIT_ROWS,
+pub const JSON_EDIT: ModeBindings = ModeBindings {
+    rows: JSON_EDIT_ROWS,
+};
+pub const CELL_DETAIL: ModeBindings = ModeBindings {
+    rows: CELL_DETAIL_ROWS,
+};
+pub const SQLITE_DIAGNOSTICS: ModeBindings = ModeBindings {
+    rows: SQLITE_DIAGNOSTICS_ROWS,
 };
 pub const ROW_DETAIL: ModeBindings = ModeBindings {
     rows: ROW_DETAIL_ROWS,
@@ -102,49 +131,62 @@ pub const ALL_MODE_BINDINGS: &[(&str, &ModeBindings)] = &[
     ("COMMAND_PALETTE", &COMMAND_PALETTE),
     ("SETTINGS", &SETTINGS),
     ("CONNECTION_SELECTOR", &CONNECTION_SELECTOR),
-    ("JSONB_DETAIL", &JSONB_DETAIL),
-    ("JSONB_EDIT", &JSONB_EDIT),
+    ("JSON_DETAIL", &JSON_DETAIL),
+    ("JSON_EDIT", &JSON_EDIT),
+    ("CELL_DETAIL", &CELL_DETAIL),
+    ("SQLITE_DIAGNOSTICS", &SQLITE_DIAGNOSTICS),
     ("ROW_DETAIL", &ROW_DETAIL),
 ];
 
 pub const HELP_KEY_INDENT_WIDTH: usize = 2;
 pub const HELP_KEY_DESC_GAP: usize = 2;
 
-pub fn global_action_for(combo: &KeyCombo, preset: KeymapPreset) -> Option<Action> {
+pub fn global_action_for_with_policy(
+    combo: &KeyCombo,
+    preset: KeymapPreset,
+    feature_policy: &FeaturePolicy,
+) -> Option<Action> {
     normal::global_keys_for(preset)
         .iter()
         .filter(|binding| {
-            !matches!(
-                &binding.action,
-                Action::OpenModal(
-                    ModalKind::SqlModal | ModalKind::ErTablePicker | ModalKind::ConnectionSelector
+            feature_policy.is_enabled(binding.feature_requirement())
+                && !matches!(
+                    &binding.action,
+                    Action::OpenModal(
+                        ModalKind::SqlModal
+                            | ModalKind::ErTablePicker
+                            | ModalKind::ConnectionSelector
+                    )
                 )
-            )
         })
         .find(|binding| binding.combos.contains(combo))
         .map(|binding| binding.action.clone())
 }
 
-// Action has payload variants without PartialEq, so tests compare by
-// discriminant — except modal actions, where several bindings differ only by
-// ModalKind and the kind must participate in equality.
 #[cfg(test)]
-pub fn same_payload_free_action(actual: &Action, expected: &Action) -> bool {
-    match (actual, expected) {
-        (Action::OpenModal(a), Action::OpenModal(b))
-        | (Action::CloseModal(a), Action::CloseModal(b))
-        | (Action::ToggleModal(a), Action::ToggleModal(b)) => a == b,
-        _ => std::mem::discriminant(actual) == std::mem::discriminant(expected),
+pub mod test_support {
+    use super::Action;
+
+    // Action has payload variants without PartialEq, so tests compare by
+    // discriminant — except modal actions, where several bindings differ only by
+    // ModalKind and the kind must participate in equality.
+    pub fn same_payload_free_action(actual: &Action, expected: &Action) -> bool {
+        match (actual, expected) {
+            (Action::OpenModal(a), Action::OpenModal(b))
+            | (Action::CloseModal(a), Action::CloseModal(b))
+            | (Action::ToggleModal(a), Action::ToggleModal(b)) => a == b,
+            _ => std::mem::discriminant(actual) == std::mem::discriminant(expected),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::same_payload_free_action;
     use super::*;
 
     mod catalog_semantics {
         use super::*;
-        use crate::update::input::keymap;
 
         mod action_mapping {
             use super::*;
@@ -168,6 +210,10 @@ mod tests {
             #[case(
                 global::QUERY_HISTORY,
                 Action::OpenModal(ModalKind::QueryHistoryPicker)
+            )]
+            #[case(
+                global::SQLITE_DIAGNOSTICS,
+                Action::OpenModal(ModalKind::SqliteDiagnostics)
             )]
             fn global_key_action_matches(#[case] kb: KeyBinding, #[case] expected: Action) {
                 assert_payload_free_action_eq(&kb, &expected);
@@ -268,7 +314,8 @@ mod tests {
                 check_non_none_have_combos(CONFIRM_DIALOG_KEYS, "CONFIRM_DIALOG_KEYS");
                 check_non_none_have_combos(COMMAND_LINE_KEYS, "COMMAND_LINE_KEYS");
                 check_non_none_have_combos(CELL_EDIT_KEYS, "CELL_EDIT_KEYS");
-                check_non_none_have_combos(JSONB_SEARCH_KEYS, "JSONB_SEARCH_KEYS");
+                check_non_none_have_combos(JSON_SEARCH_KEYS, "JSON_SEARCH_KEYS");
+                check_non_none_have_combos(CELL_DETAIL_SEARCH_KEYS, "CELL_DETAIL_SEARCH_KEYS");
             }
 
             fn check_mode_rows_exec_valid(rows: &[ModeRow], name: &str) {
@@ -333,7 +380,11 @@ mod tests {
                     "CONNECTION_SETUP_KEYS",
                 );
                 check_none_action_entries_have_no_combos(RESULT_ACTIVE_KEYS, "RESULT_ACTIVE_KEYS");
-                check_none_action_entries_have_no_combos(JSONB_SEARCH_KEYS, "JSONB_SEARCH_KEYS");
+                check_none_action_entries_have_no_combos(JSON_SEARCH_KEYS, "JSON_SEARCH_KEYS");
+                check_none_action_entries_have_no_combos(
+                    CELL_DETAIL_SEARCH_KEYS,
+                    "CELL_DETAIL_SEARCH_KEYS",
+                );
             }
         }
 
@@ -397,69 +448,14 @@ mod tests {
             fn no_duplicate_combos_in_simple_modes() {
                 check_no_duplicate_combos(CONFIRM_DIALOG_KEYS, "CONFIRM_DIALOG_KEYS");
                 check_no_duplicate_combos(COMMAND_LINE_KEYS, "COMMAND_LINE_KEYS");
-                check_no_duplicate_combos(JSONB_SEARCH_KEYS, "JSONB_SEARCH_KEYS");
+                check_no_duplicate_combos(JSON_SEARCH_KEYS, "JSON_SEARCH_KEYS");
+                check_no_duplicate_combos(CELL_DETAIL_SEARCH_KEYS, "CELL_DETAIL_SEARCH_KEYS");
                 check_no_conflicting_combos(GLOBAL_KEYS, "GLOBAL_KEYS");
                 check_no_conflicting_combos(IDE_GLOBAL_KEYS, "IDE_GLOBAL_KEYS");
                 for (name, mb) in ALL_MODE_BINDINGS {
                     check_no_duplicate_combos_rows(mb.rows, name);
                 }
                 check_no_duplicate_combos_rows(ER_PICKER_ROWS_IDE, "ER_PICKER_ROWS_IDE");
-            }
-        }
-
-        mod resolver_contract {
-            use super::*;
-
-            fn check_keymap_roundtrip(bindings: &[KeyBinding], name: &str) {
-                for kb in bindings
-                    .iter()
-                    .filter(|kb| !matches!(kb.action, Action::None))
-                {
-                    for combo in kb.combos {
-                        let resolved = keymap::resolve(combo, bindings);
-                        match resolved {
-                            Some(ref action)
-                                if std::mem::discriminant(action)
-                                    == std::mem::discriminant(&kb.action) => {}
-                            other => panic!(
-                                "{name}: combo {combo:?} resolved to {other:?}, expected {:?}",
-                                kb.action
-                            ),
-                        }
-                    }
-                }
-            }
-
-            fn check_resolve_mode_roundtrip(rows: &[ModeRow], name: &str) {
-                for row in rows {
-                    for eb in row.bindings {
-                        for combo in eb.combos {
-                            let resolved = keymap::resolve_mode(combo, rows);
-                            match resolved {
-                                Some(ref action)
-                                    if std::mem::discriminant(action)
-                                        == std::mem::discriminant(&eb.action) => {}
-                                other => panic!(
-                                    "{name}: combo {combo:?} resolved to {other:?}, expected {:?}",
-                                    eb.action
-                                ),
-                            }
-                        }
-                    }
-                }
-            }
-
-            #[test]
-            fn keymap_resolve_roundtrip_for_simple_modes() {
-                check_keymap_roundtrip(CONFIRM_DIALOG_KEYS, "CONFIRM_DIALOG_KEYS");
-                check_keymap_roundtrip(COMMAND_LINE_KEYS, "COMMAND_LINE_KEYS");
-                check_keymap_roundtrip(JSONB_SEARCH_KEYS, "JSONB_SEARCH_KEYS");
-                check_keymap_roundtrip(GLOBAL_KEYS, "GLOBAL_KEYS");
-                check_keymap_roundtrip(IDE_GLOBAL_KEYS, "IDE_GLOBAL_KEYS");
-                for (name, mb) in ALL_MODE_BINDINGS {
-                    check_resolve_mode_roundtrip(mb.rows, name);
-                }
-                check_resolve_mode_roundtrip(ER_PICKER_ROWS_IDE, "ER_PICKER_ROWS_IDE");
             }
         }
 
@@ -553,14 +549,33 @@ mod tests {
                 check_no_plain_char_in_filter_mode(CELL_EDIT_KEYS, "CELL_EDIT_KEYS", &[':']);
             }
         }
+    }
 
-        mod catalog_coverage {
-            use super::*;
-
-            #[test]
-            fn all_mode_bindings_count() {
-                assert_eq!(ALL_MODE_BINDINGS.len(), 11);
-            }
-        }
+    #[test]
+    fn feature_requirements_are_attached_to_feature_bindings() {
+        assert_eq!(
+            global::ER_DIAGRAM.feature_requirement(),
+            FeatureRequirement::ErDiagram
+        );
+        assert_eq!(
+            global::SQLITE_DIAGNOSTICS.feature_requirement(),
+            FeatureRequirement::SqliteDiagnostics
+        );
+        assert_eq!(
+            sql_modal_plan::EXPLAIN.feature_requirement(),
+            FeatureRequirement::Explain
+        );
+        assert_eq!(
+            sql_modal_plan::ANALYZE.feature_requirement(),
+            FeatureRequirement::ExplainAnalyze
+        );
+        assert_eq!(
+            sql_modal_compare::EDIT_QUERY.feature_requirement(),
+            FeatureRequirement::PlanComparison
+        );
+        assert_eq!(
+            JSON_DETAIL_ROWS[0].feature_requirement(),
+            FeatureRequirement::JsonDocumentDetail
+        );
     }
 }

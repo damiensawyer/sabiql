@@ -4,25 +4,30 @@ use ratatui::style::Style;
 use ratatui::widgets::{List, ListItem, ListState};
 
 use crate::app::model::app_state::AppState;
-use crate::features::pickers::PickerRenderMetrics;
+use crate::app::model::shared::render_output::PickerLayout;
+use crate::app::policy::table_kind::table_display_name;
+use crate::app::update::input::keybindings::table_picker;
 use crate::primitives::molecules::{FooterHintBar, render_filter_input_line, render_modal};
 use crate::theme::ThemePalette;
 
 pub struct TablePicker;
 
 impl TablePicker {
-    pub fn render(
-        frame: &mut Frame,
-        state: &AppState,
-        theme: &ThemePalette,
-    ) -> PickerRenderMetrics {
-        let filtered_count = state.filtered_tables().len();
+    pub fn render(frame: &mut Frame, state: &AppState, theme: &ThemePalette) -> PickerLayout {
+        let filtered_tables = state.filtered_tables();
+        let filtered_count = filtered_tables.len();
         let (_, inner) = render_modal(
             frame,
             Constraint::Percentage(60),
             Constraint::Percentage(70),
             " Table Picker ",
-            FooterHintBar::with_prefix(format!("{filtered_count} tables"), [("Enter", "Select")]),
+            FooterHintBar::with_prefix(
+                format!("{filtered_count} tables"),
+                [
+                    table_picker::ENTER_SELECT.as_hint(),
+                    table_picker::ESC_CLOSE.as_hint(),
+                ],
+            ),
             theme,
         );
 
@@ -32,16 +37,22 @@ impl TablePicker {
         let visible_width = render_filter_input_line(
             frame,
             filter_area,
-            state.ui.table_picker.filter_input(),
+            state.ui.table_picker().filter_input(),
             None,
             theme,
         );
 
-        let filtered = state.filtered_tables();
-        let items: Vec<ListItem> = filtered
+        let items: Vec<ListItem> = filtered_tables
             .iter()
             .map(|t| {
-                let content = format!("  {}", t.qualified_name());
+                let content = format!(
+                    "  {}",
+                    table_display_name(
+                        state.session.active_database_type_or_default(),
+                        &t.schema,
+                        &t.name,
+                    )
+                );
                 ListItem::new(content).style(Style::default().fg(theme.semantic.text.secondary))
             })
             .collect();
@@ -51,15 +62,15 @@ impl TablePicker {
             .highlight_symbol("▸ ");
 
         let selected = if filtered_count > 0 {
-            Some(state.ui.table_picker.selected())
+            Some(state.ui.table_picker().selected())
         } else {
             None
         };
         let mut list_state = ListState::default()
             .with_selected(selected)
-            .with_offset(state.ui.table_picker.scroll_offset());
+            .with_offset(state.ui.table_picker().scroll_offset());
         frame.render_stateful_widget(list, list_area, &mut list_state);
-        PickerRenderMetrics {
+        PickerLayout {
             pane_height: list_area.height,
             filter_visible_width: visible_width,
         }

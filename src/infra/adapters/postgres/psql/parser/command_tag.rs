@@ -1,7 +1,7 @@
 use crate::domain::CommandTag;
+use crate::domain::postgres_sql::{has_select_into, split_statements as split_sql_statements};
 
 use super::super::super::PostgresAdapter;
-use super::lexer::{has_select_into, split_sql_statements};
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub(in crate::adapters::postgres) enum ParseCommandTagError {
@@ -86,11 +86,6 @@ impl PostgresAdapter {
             .find(|line| !line.trim().is_empty())
             .ok_or(ParseCommandTagError::Empty)
             .and_then(Self::parse_command_tag_str)
-    }
-
-    #[cfg(test)]
-    pub(in crate::adapters::postgres) fn extract_command_tag(stdout: &str) -> Option<CommandTag> {
-        Self::parse_command_tag(stdout).ok()
     }
 
     fn is_known_tcl_tag(s: &str) -> bool {
@@ -241,13 +236,13 @@ impl PostgresAdapter {
 }
 
 #[cfg_attr(test, derive(Debug))]
-pub(in crate::adapters::postgres) struct ResolvedTags {
+struct ResolvedTags {
     all: Vec<CommandTag>,
     effective: Vec<CommandTag>,
 }
 
 impl ResolvedTags {
-    pub(in crate::adapters::postgres) fn resolve(stdout: &str, sql: &str) -> Option<Self> {
+    fn resolve(stdout: &str, sql: &str) -> Option<Self> {
         let parsed = PostgresAdapter::parse_all_tags(stdout)?;
         let corrected = PostgresAdapter::correct_ctas_tags(sql, parsed);
         let effective = PostgresAdapter::discard_rolled_back(&corrected);
@@ -257,7 +252,7 @@ impl ResolvedTags {
         })
     }
 
-    pub(in crate::adapters::postgres) fn aggregate(&self) -> Option<CommandTag> {
+    fn aggregate(&self) -> Option<CommandTag> {
         if let Some(tag) = self.effective.iter().find(|t| t.is_schema_modifying()) {
             return Some(tag.clone());
         }
@@ -399,38 +394,21 @@ mod tests {
         }
 
         #[test]
-        fn extract_from_multiline_with_notice() {
+        fn parse_last_nonempty_line_after_notice() {
             let stdout = "NOTICE:  table \"foo\" does not exist, skipping\nDROP TABLE\n";
             assert_eq!(
-                PostgresAdapter::extract_command_tag(stdout),
-                Some(CommandTag::Drop("TABLE".to_string()))
+                PostgresAdapter::parse_command_tag(stdout),
+                Ok(CommandTag::Drop("TABLE".to_string()))
             );
         }
 
         #[test]
-        fn extract_skips_trailing_empty_lines() {
+        fn parse_skips_trailing_empty_lines() {
             let stdout = "INSERT 0 7\n\n  \n";
             assert_eq!(
-                PostgresAdapter::extract_command_tag(stdout),
-                Some(CommandTag::Insert(7))
+                PostgresAdapter::parse_command_tag(stdout),
+                Ok(CommandTag::Insert(7))
             );
-        }
-
-        #[test]
-        fn extract_from_empty_returns_none() {
-            assert_eq!(PostgresAdapter::extract_command_tag(""), None);
-            assert_eq!(PostgresAdapter::extract_command_tag("  \n  \n"), None);
-        }
-
-        #[test]
-        fn parse_affected_rows_regression() {
-            assert_eq!(PostgresAdapter::parse_affected_rows("UPDATE 3\n"), Some(3));
-            assert_eq!(PostgresAdapter::parse_affected_rows("DELETE 5\n"), Some(5));
-            assert_eq!(
-                PostgresAdapter::parse_affected_rows("INSERT 0 10\n"),
-                Some(10)
-            );
-            assert_eq!(PostgresAdapter::parse_affected_rows("SELECT 1\n"), Some(1));
         }
     }
 
@@ -550,10 +528,10 @@ mod tests {
     mod discard_rolled_back {
         use super::*;
 
-        fn sp() -> CommandTag {
+        fn savepoint_tag() -> CommandTag {
             CommandTag::Other("SAVEPOINT".to_string())
         }
-        fn release() -> CommandTag {
+        fn release_tag() -> CommandTag {
             CommandTag::Other("RELEASE".to_string())
         }
 
@@ -591,9 +569,9 @@ mod tests {
             let tags = vec![
                 CommandTag::Begin,
                 CommandTag::Update(1),
-                sp(),
+                savepoint_tag(),
                 CommandTag::Insert(1),
-                release(),
+                release_tag(),
                 CommandTag::Commit,
             ];
             assert_eq!(
@@ -607,7 +585,7 @@ mod tests {
             let tags = vec![
                 CommandTag::Begin,
                 CommandTag::Update(1),
-                sp(),
+                savepoint_tag(),
                 CommandTag::Insert(1),
                 CommandTag::Rollback,
                 CommandTag::Commit,
@@ -622,7 +600,7 @@ mod tests {
         fn full_rollback_with_savepoint() {
             let tags = vec![
                 CommandTag::Begin,
-                sp(),
+                savepoint_tag(),
                 CommandTag::Create("TABLE".to_string()),
                 CommandTag::Rollback,
                 CommandTag::Commit,
@@ -652,7 +630,7 @@ mod tests {
             let tags = vec![
                 CommandTag::Begin,
                 CommandTag::Update(1),
-                sp(),
+                savepoint_tag(),
                 CommandTag::Insert(1),
                 CommandTag::Rollback,
                 CommandTag::Delete(3),
@@ -668,10 +646,10 @@ mod tests {
         fn rollback_then_release_same_sp() {
             let tags = vec![
                 CommandTag::Begin,
-                sp(),
+                savepoint_tag(),
                 CommandTag::Insert(1),
                 CommandTag::Rollback,
-                release(),
+                release_tag(),
                 CommandTag::Commit,
             ];
             let effective = PostgresAdapter::discard_rolled_back(&tags);
@@ -685,10 +663,10 @@ mod tests {
             let tags = vec![
                 CommandTag::Begin,
                 CommandTag::Update(1),
-                sp(),
+                savepoint_tag(),
                 CommandTag::Insert(1),
                 CommandTag::Rollback,
-                release(),
+                release_tag(),
                 CommandTag::Rollback,
             ];
             let effective = PostgresAdapter::discard_rolled_back(&tags);

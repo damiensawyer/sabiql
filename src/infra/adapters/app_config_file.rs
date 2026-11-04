@@ -3,19 +3,19 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-pub const CONFIG_FILE_NAME: &str = "connections.toml";
-pub const LAST_CONNECTION_FILE_NAME: &str = "last_connection_id.txt";
+pub(super) const CONFIG_FILE_NAME: &str = "connections.toml";
+pub(super) const LAST_CONNECTION_FILE_NAME: &str = "last_connection_id.txt";
 
 static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 static CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
 
-pub fn lock() -> MutexGuard<'static, ()> {
+pub(super) fn lock() -> MutexGuard<'static, ()> {
     CONFIG_FILE_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-pub fn get_config_dir() -> Result<PathBuf, std::io::Error> {
+pub(super) fn get_config_dir() -> Result<PathBuf, std::io::Error> {
     let config_base = dirs::config_dir().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -25,11 +25,11 @@ pub fn get_config_dir() -> Result<PathBuf, std::io::Error> {
     Ok(config_base.join("sabiql"))
 }
 
-pub fn config_file_path(config_dir: &Path) -> PathBuf {
+pub(super) fn config_file_path(config_dir: &Path) -> PathBuf {
     config_dir.join(CONFIG_FILE_NAME)
 }
 
-pub fn write_config_file(config_dir: &Path, content: &str) -> Result<(), std::io::Error> {
+pub(super) fn write_config_file(config_dir: &Path, content: &str) -> Result<(), std::io::Error> {
     if !config_dir.exists() {
         fs::create_dir_all(config_dir)?;
     }
@@ -60,19 +60,19 @@ pub fn write_config_file(config_dir: &Path, content: &str) -> Result<(), std::io
     Ok(())
 }
 
-pub fn render_config_file(content: &str) -> String {
+pub(super) fn render_config_file(content: &str) -> String {
     format!(
         "# sabiql configuration\n# WARNING: Connection passwords are stored in plain text\n\n{content}"
     )
 }
 
 /// Get the path to the temp file that stores the last connection ID.
-pub fn last_connection_file_path(config_dir: &Path) -> PathBuf {
+pub(super) fn last_connection_file_path(config_dir: &Path) -> PathBuf {
     config_dir.join(LAST_CONNECTION_FILE_NAME)
 }
 
 /// Write the last connection ID to the temp file.
-pub fn write_last_connection_id(
+pub(super) fn write_last_connection_id(
     config_dir: &Path,
     connection_id: &str,
 ) -> Result<(), std::io::Error> {
@@ -80,7 +80,7 @@ pub fn write_last_connection_id(
 }
 
 /// Read the last connection ID from the temp file. Returns None if file doesn't exist.
-pub fn read_last_connection_id(config_dir: &Path) -> Result<Option<String>, std::io::Error> {
+pub(super) fn read_last_connection_id(config_dir: &Path) -> Result<Option<String>, std::io::Error> {
     let path = last_connection_file_path(config_dir);
     if !path.exists() {
         return Ok(None);

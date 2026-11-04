@@ -1,18 +1,14 @@
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use super::app_config_file::{
     self, config_file_path, get_config_dir as app_config_dir, render_config_file, write_config_file,
 };
 use crate::app::ports::outbound::connection_store::{ConnectionStore, ConnectionStoreError};
-use crate::config::connection_config::{CURRENT_VERSION, ConfigVersionCheck, ConnectionConfigFile};
-use crate::domain::connection::{ConnectionId, ConnectionName, ConnectionProfile};
-
-#[cfg(test)]
-use super::app_config_file::CONFIG_FILE_NAME;
-#[cfg(test)]
-use std::path::Path;
+use crate::config::{
+    CURRENT_VERSION, ConfigVersionCheck, ConnectionConfigFile, is_supported_config_version,
+};
+use crate::domain::connection::{ConnectionId, ConnectionProfile};
 
 pub struct TomlConnectionStore {
     config_dir: PathBuf,
@@ -20,7 +16,7 @@ pub struct TomlConnectionStore {
 
 impl TomlConnectionStore {
     pub fn new() -> Result<Self, ConnectionStoreError> {
-        let config_dir = get_config_dir()?;
+        let config_dir = app_config_dir()?;
         Ok(Self { config_dir })
     }
 
@@ -28,86 +24,12 @@ impl TomlConnectionStore {
         Self { config_dir }
     }
 
-    /// Given a source profile and existing profiles, produce a new profile
-    /// with a duplicated name that uses the next available number suffix.
-    ///
-    /// Naming rules:
-    /// - "gumshoe" → "gumshoe (1)"
-    /// - "gumshoe (1)" → "gumshoe (2)"  
-    /// - "gumshoe" when "gumshoe (1)" exists → "gumshoe (2)" etc.
-    fn make_duplicated_name(source: &ConnectionProfile, existing: &[ConnectionProfile]) -> ConnectionProfile {
-        let source_name = source.display_name();
-        let (base_name, _) = Self::parse_name_suffix(source_name);
-
-        // Gather all numbers used by connections with this base name
-        let all_numbers = Self::gather_suffix_numbers(existing, &base_name);
-        let max_existing = all_numbers.iter().max().copied().unwrap_or(0);
-
-        // Start from the next number after the max
-        let mut next_num = if all_numbers.is_empty() { 1 } else { max_existing + 1 };
-
-        // Check that this number doesn't already exist, increment if it does
-        while Self::has_name_with_number_suffix(existing, &base_name, next_num) {
-            next_num += 1;
-        }
-
-        let new_name = format!("{base_name} ({next_num})");
-        ConnectionProfile {
-            id: source.id.clone(), // temporary, will be replaced
-            name: ConnectionName::new(new_name).unwrap(),
-            host: source.host.clone(),
-            port: source.port,
-            database: source.database.clone(),
-            username: source.username.clone(),
-            password: source.password.clone(),
-            ssl_mode: source.ssl_mode,
-        }
-    }
-
-    /// Parse a connection name to extract the base name and any number suffix.
-    /// e.g. "gumshoe (17)" → ("gumshoe", vec![17])
-    ///      "gumshoe" → ("gumshoe", vec![])
-    fn parse_name_suffix(name: &str) -> (String, Vec<usize>) {
-        // Look for a suffix like " (N)" at the end
-        if let Some(paren_pos) = name.rfind(" (") {
-            let after_space = &name[paren_pos + 2..];
-            if after_space.ends_with(')') && after_space.len() > 1 {
-                let num_str = &after_space[..after_space.len() - 1];
-                if let Ok(num) = num_str.parse::<usize>() {
-                    let base = name[..paren_pos].to_string();
-                    return (base, vec![num]);
-                }
-            }
-        }
-        (name.to_string(), vec![])
-    }
-
-    /// Gather all numbers from profiles whose base name matches.
-    fn gather_suffix_numbers(profiles: &[ConnectionProfile], base: &str) -> Vec<usize> {
-        profiles
-            .iter()
-            .filter_map(|p| {
-                let (b, nums) = Self::parse_name_suffix(p.display_name());
-                if b == base {
-                    nums.into_iter().next()
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    fn has_name_with_number_suffix(profiles: &[ConnectionProfile], base: &str, num: usize) -> bool {
-        let expected = format!("{base} ({num})");
-        profiles.iter().any(|p| p.display_name() == expected)
-    }
-
-    fn config_file_path(&self) -> PathBuf {
+    pub fn storage_path(&self) -> PathBuf {
         config_file_path(&self.config_dir)
     }
 
     fn load_config_file(&self) -> Result<Option<ConnectionConfigFile>, ConnectionStoreError> {
-        let path = self.config_file_path();
+        let path = config_file_path(&self.config_dir);
         if !path.exists() {
             return Ok(None);
         }
@@ -115,7 +37,7 @@ impl TomlConnectionStore {
         let content = fs::read_to_string(&path)?;
         let version_check: ConfigVersionCheck = toml::from_str(&content)?;
 
-        if version_check.version != CURRENT_VERSION {
+        if !is_supported_config_version(version_check.version) {
             return Err(ConnectionStoreError::VersionMismatch {
                 found: version_check.version,
                 expected: CURRENT_VERSION,
@@ -145,11 +67,6 @@ impl TomlConnectionStore {
 }
 
 impl ConnectionStore for TomlConnectionStore {
-    fn load(&self) -> Result<Option<ConnectionProfile>, ConnectionStoreError> {
-        let profiles = self.load_all()?;
-        Ok(profiles.into_iter().next())
-    }
-
     fn load_all(&self) -> Result<Vec<ConnectionProfile>, ConnectionStoreError> {
         let Some(config) = self.load_config_file()? else {
             return Ok(vec![]);
@@ -202,71 +119,89 @@ impl ConnectionStore for TomlConnectionStore {
         self.write_all(&profiles)
     }
 
-    fn duplicate(
-        &self,
-        id: &ConnectionId,
-    ) -> Result<ConnectionProfile, ConnectionStoreError> {
+    fn duplicate(&self, id: &ConnectionId) -> Result<ConnectionProfile, ConnectionStoreError> {
         let _guard = app_config_file::lock();
-        let profiles = self.load_all()?;
+        let mut profiles = self.load_all()?;
 
         let source = profiles
             .iter()
             .find(|p| &p.id == id)
             .ok_or_else(|| ConnectionStoreError::NotFound(id.to_string()))?;
 
-        let new_profile = Self::make_duplicated_name(source, &profiles);
-        let new_id = crate::domain::connection::ConnectionId::new();
+        let new_name = duplicated_name(source.display_name(), &profiles);
+        let new_profile = ConnectionProfile::with_id_and_config(
+            ConnectionId::new(),
+            new_name,
+            source.config.clone(),
+        )
+        .map_err(ConnectionStoreError::InvalidProfile)?;
 
-        let final_profile = ConnectionProfile::with_id(
-            new_id,
-            new_profile.name.as_str(),
-            new_profile.host.clone(),
-            new_profile.port,
-            new_profile.database.clone(),
-            new_profile.username.clone(),
-            new_profile.password.clone(),
-            new_profile.ssl_mode,
-        ).map_err(|e| ConnectionStoreError::InvalidProfile(e.into()))?;
+        profiles.push(new_profile.clone());
+        self.write_all(&profiles)?;
 
-        let mut all_profiles = profiles;
-        all_profiles.push(final_profile.clone());
-        self.write_all(&all_profiles)?;
-
-        Ok(final_profile)
-    }
-
-    fn storage_path(&self) -> PathBuf {
-        self.config_file_path()
+        Ok(new_profile)
     }
 
     fn save_last_connection_id(&self, id: &ConnectionId) -> Result<(), ConnectionStoreError> {
-        let path = app_config_file::last_connection_file_path(&self.config_dir);
-        // Write to a temp file first for atomicity
-        let tmp_path = path.with_extension(format!("{}.tmp", id.as_str()));
-        if let Err(e) = fs::write(&tmp_path, id.as_str()) {
-            let _ = fs::remove_file(&tmp_path);
-            return Err(ConnectionStoreError::Io(Arc::new(e)));
-        }
-        if let Err(e) = fs::rename(&tmp_path, &path) {
-            let _ = fs::remove_file(&tmp_path);
-            return Err(ConnectionStoreError::Io(Arc::new(e)));
-        }
+        app_config_file::write_last_connection_id(&self.config_dir, id.as_str())?;
         Ok(())
+    }
+
+    fn load_last_connection_id(&self) -> Result<Option<ConnectionId>, ConnectionStoreError> {
+        Ok(app_config_file::read_last_connection_id(&self.config_dir)?
+            .filter(|s| !s.is_empty())
+            .map(ConnectionId::from_string))
     }
 }
 
-fn get_config_dir() -> Result<PathBuf, ConnectionStoreError> {
-    Ok(app_config_dir()?)
+/// Produce a duplicated connection name using the next available number suffix.
+///
+/// Naming rules:
+/// - "gumshoe" -> "gumshoe (1)"
+/// - "gumshoe (1)" -> "gumshoe (2)"
+/// - "gumshoe" when "gumshoe (1)" exists -> "gumshoe (2)" etc.
+fn duplicated_name(source_name: &str, existing: &[ConnectionProfile]) -> String {
+    let (base_name, _) = parse_name_suffix(source_name);
+    let mut next_num = existing
+        .iter()
+        .filter_map(|p| match parse_name_suffix(p.display_name()) {
+            (b, Some(n)) if b == base_name => Some(n),
+            _ => None,
+        })
+        .max()
+        .map_or(1, |max| max + 1);
+    while existing
+        .iter()
+        .any(|p| p.display_name() == format!("{base_name} ({next_num})"))
+    {
+        next_num += 1;
+    }
+    format!("{base_name} ({next_num})")
+}
+
+/// Split a connection name into its base name and an optional " (N)" suffix.
+/// e.g. "gumshoe (17)" -> ("gumshoe", Some(17)); "gumshoe" -> ("gumshoe", None)
+fn parse_name_suffix(name: &str) -> (&str, Option<usize>) {
+    if let Some(paren_pos) = name.rfind(" (")
+        && let Some(num_str) = name[paren_pos + 2..].strip_suffix(')')
+        && let Ok(num) = num_str.parse::<usize>()
+    {
+        return (&name[..paren_pos], Some(num));
+    }
+    (name, None)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::app_config_file::CONFIG_FILE_NAME;
     use super::*;
     use crate::domain::connection::SslMode;
+    use crate::domain::connection::{ConnectionConfig, DatabaseType, PostgresConnectionConfig};
+    use std::path::Path;
     use tempfile::TempDir;
 
     fn make_test_profile(name: &str) -> ConnectionProfile {
-        ConnectionProfile::new(
+        ConnectionProfile::new_postgres(
             name,
             "localhost",
             5432,
@@ -317,7 +252,7 @@ ssl_mode = "prefer"
                 result,
                 Err(ConnectionStoreError::VersionMismatch {
                     found: 1,
-                    expected: 2
+                    expected: 3
                 })
             ));
         }
@@ -336,6 +271,39 @@ ssl_mode = "prefer"
                 result,
                 Err(ConnectionStoreError::TomlDeserialize(_))
             ));
+        }
+
+        #[test]
+        fn loads_v2_entries_as_postgresql() {
+            let temp_dir = TempDir::new().unwrap();
+            let config_path = temp_dir.path().join(CONFIG_FILE_NAME);
+
+            let content = r#"
+version = 2
+
+[[connections]]
+id = "test-id"
+name = "Production"
+host = "localhost"
+port = 5432
+database = "testdb"
+username = "testuser"
+password = "testpass"
+ssl_mode = "prefer"
+"#;
+            fs::write(&config_path, content).unwrap();
+
+            let store = TomlConnectionStore::with_config_dir(temp_dir.path().to_path_buf());
+            let profiles = store.load_all().unwrap();
+
+            assert_eq!(profiles.len(), 1);
+            assert_eq!(profiles[0].database_type(), DatabaseType::PostgreSQL);
+            assert_eq!(profiles[0].postgres_config().unwrap().database, "testdb");
+            assert!(
+                fs::read_to_string(&config_path)
+                    .unwrap()
+                    .contains("version = 2")
+            );
         }
 
         #[test]
@@ -361,8 +329,9 @@ ssl_mode = "prefer"
             let profiles = store.load_all().unwrap();
 
             assert_eq!(profiles.len(), 1);
-            assert_eq!(profiles[0].username, "");
-            assert_eq!(profiles[0].host, "");
+            let config = profiles[0].postgres_config().unwrap();
+            assert_eq!(config.username, "");
+            assert_eq!(config.host, "");
         }
     }
 
@@ -407,7 +376,14 @@ ssl_mode = "prefer"
             let mut profile = make_test_profile("Production");
             store.save(&profile).unwrap();
 
-            profile.host = "newhost".to_string();
+            profile.config = ConnectionConfig::PostgreSQL(PostgresConnectionConfig::new(
+                "newhost",
+                5432,
+                "testdb",
+                "testuser",
+                "testpass",
+                SslMode::Prefer,
+            ));
             let result = store.save(&profile);
 
             assert!(result.is_ok());
@@ -511,23 +487,28 @@ ssl_mode = "prefer"
         use super::*;
 
         #[test]
-        fn save_and_load_preserves_data() {
+        fn empty_sqlite_path_returns_invalid_profile() {
             let temp_dir = TempDir::new().unwrap();
+            let config_path = temp_dir.path().join(CONFIG_FILE_NAME);
+
+            let content = r#"
+version = 3
+
+[[connections]]
+id = "sqlite-id"
+name = "Local"
+db_type = "sqlite"
+path = ""
+"#;
+            fs::write(&config_path, content).unwrap();
+
             let store = TomlConnectionStore::with_config_dir(temp_dir.path().to_path_buf());
-            let profile = make_test_profile("Test Connection");
+            let result = store.load_all();
 
-            store.save(&profile).unwrap();
-            let loaded = store.load().unwrap();
-
-            assert!(loaded.is_some());
-            let loaded = loaded.unwrap();
-            assert_eq!(loaded.name.as_str(), profile.name.as_str());
-            assert_eq!(loaded.host, profile.host);
-            assert_eq!(loaded.port, profile.port);
-            assert_eq!(loaded.database, profile.database);
-            assert_eq!(loaded.username, profile.username);
-            assert_eq!(loaded.password, profile.password);
-            assert_eq!(loaded.ssl_mode, profile.ssl_mode);
+            assert!(matches!(
+                result,
+                Err(ConnectionStoreError::InvalidProfile(_))
+            ));
         }
     }
 
@@ -575,7 +556,7 @@ ssl_mode = "prefer"
                 result,
                 Err(ConnectionStoreError::VersionMismatch {
                     found: 1,
-                    expected: 2
+                    expected: 3
                 })
             ));
 
@@ -619,16 +600,24 @@ ssl_mode = "prefer"
             store.save(&profile1).unwrap();
             store.save(&profile2).unwrap();
 
-            profile2.host = "updated-host".to_string();
+            profile2.config = ConnectionConfig::PostgreSQL(PostgresConnectionConfig::new(
+                "updated-host",
+                5432,
+                "testdb",
+                "testuser",
+                "testpass",
+                SslMode::Prefer,
+            ));
             store.save(&profile2).unwrap();
 
             let all = store.load_all().unwrap();
             assert_eq!(all.len(), 2);
             assert!(all.iter().any(|p| p.name.as_str() == "First"));
-            assert!(
-                all.iter()
-                    .any(|p| p.name.as_str() == "Second" && p.host == "updated-host")
-            );
+            assert!(all.iter().any(|p| {
+                p.name.as_str() == "Second"
+                    && p.postgres_config()
+                        .is_some_and(|config| config.host == "updated-host")
+            }));
         }
     }
 }

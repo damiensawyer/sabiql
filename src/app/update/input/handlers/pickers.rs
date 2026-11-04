@@ -1,9 +1,10 @@
 use crate::model::app_state::AppState;
+use crate::policy::FeaturePolicy;
 use crate::update::action::{Action, InputTarget};
 use crate::update::input::keybindings::{self, Key, KeyCombo, Modifiers};
-use crate::update::input::keymap::resolve_mode;
+use crate::update::input::keymap::resolve_mode_with_policy;
 
-pub fn handle_table_picker_keys(combo: KeyCombo) -> Action {
+pub(super) fn handle_table_picker_keys(combo: KeyCombo) -> Action {
     if let Some(action) = keybindings::TABLE_PICKER.resolve(&combo) {
         return action;
     }
@@ -17,13 +18,13 @@ pub fn handle_table_picker_keys(combo: KeyCombo) -> Action {
     }
 }
 
-pub fn handle_command_palette_keys(combo: KeyCombo) -> Action {
+pub(super) fn handle_command_palette_keys(combo: KeyCombo) -> Action {
     keybindings::COMMAND_PALETTE
         .resolve(&combo)
         .unwrap_or(Action::None)
 }
 
-pub fn handle_settings_keys(combo: KeyCombo, state: &AppState) -> Action {
+pub(super) fn handle_settings_keys(combo: KeyCombo, state: &AppState) -> Action {
     if state.settings.is_editing_custom_er_browser() {
         return handle_custom_browser_edit_keys(combo);
     }
@@ -68,7 +69,7 @@ fn handle_custom_browser_edit_keys(combo: KeyCombo) -> Action {
     }
 }
 
-pub fn handle_query_history_picker_keys(combo: KeyCombo) -> Action {
+pub(super) fn handle_query_history_picker_keys(combo: KeyCombo) -> Action {
     if let Some(action) = keybindings::QUERY_HISTORY_PICKER.resolve(&combo) {
         return action;
     }
@@ -81,10 +82,12 @@ pub fn handle_query_history_picker_keys(combo: KeyCombo) -> Action {
     }
 }
 
-pub fn handle_er_table_picker_keys(combo: KeyCombo, state: &AppState) -> Action {
-    if let Some(action) = resolve_mode(
+pub(super) fn handle_er_table_picker_keys(combo: KeyCombo, state: &AppState) -> Action {
+    let feature_policy = FeaturePolicy::new(&state.session.active_engine_feature_profile());
+    if let Some(action) = resolve_mode_with_policy(
         &combo,
         keybindings::er_picker_rows(state.settings.saved_keymap_preset()),
+        &feature_policy,
     ) {
         return action;
     }
@@ -259,6 +262,7 @@ mod tests {
             let mut state = settings_state();
             state.settings.switch_next_section();
             state.settings.switch_next_section();
+            state.settings.switch_next_section();
             state.settings.start_custom_browser_edit();
             state
         }
@@ -378,8 +382,11 @@ mod tests {
     mod er_table_picker {
         use super::*;
 
+        use crate::update::test_fixtures;
         fn state() -> AppState {
-            AppState::new("test".to_string())
+            let mut state = AppState::new("test".to_string());
+            test_fixtures::activate_postgres_connection(&mut state, "postgres://localhost/test");
+            state
         }
 
         fn state_with_preset(preset: KeymapPreset) -> AppState {
@@ -462,17 +469,11 @@ mod tests {
             ));
         }
 
-        #[test]
-        fn default_ctrl_a_selects_all() {
-            let state = state_with_preset(KeymapPreset::Default);
-            let result = handle_er_table_picker_keys(combo_ctrl(Key::Char('a')), &state);
-
-            assert!(matches!(result, Action::ErSelectAll));
-        }
-
-        #[test]
-        fn ide_alt_a_selects_all() {
-            let state = state_with_preset(KeymapPreset::Ide);
+        #[rstest]
+        #[case(KeymapPreset::Default)]
+        #[case(KeymapPreset::Ide)]
+        fn alt_a_selects_all_for_both_presets(#[case] preset: KeymapPreset) {
+            let state = state_with_preset(preset);
             let result = handle_er_table_picker_keys(KeyCombo::alt(Key::Char('a')), &state);
 
             assert!(matches!(result, Action::ErSelectAll));
@@ -490,14 +491,6 @@ mod tests {
                     ch: 'A'
                 }
             ));
-        }
-
-        #[test]
-        fn ide_ctrl_a_is_ignored() {
-            let state = state_with_preset(KeymapPreset::Ide);
-            let result = handle_er_table_picker_keys(combo_ctrl(Key::Char('a')), &state);
-
-            assert!(matches!(result, Action::None));
         }
 
         #[test]

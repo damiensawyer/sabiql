@@ -5,26 +5,20 @@ use crate::cmd::effect::Effect;
 use crate::domain::explain_plan::{ComparisonVerdict, compare_plans};
 use crate::model::app_state::AppState;
 use crate::model::shared::flash_timer::FlashId;
-use crate::model::shared::text_input::TextInputLike;
 use crate::model::sql_editor::modal::SqlModalTab;
-use crate::ports::outbound::ClipboardError;
-use crate::services::AppServices;
 use crate::update::action::Action;
 use crate::update::dispatch_result::DispatchResult;
+use crate::update::helpers::clipboard_unavailable;
 
-pub(super) fn reduce_yank(
-    state: &mut AppState,
-    action: &Action,
-    now: Instant,
-    services: &AppServices,
-) -> DispatchResult {
+pub(super) fn reduce_yank(state: &mut AppState, action: &Action, now: Instant) -> DispatchResult {
     match action {
         Action::SqlModalYank => {
-            let active_tab = services
-                .db_capabilities
+            let active_tab = state
+                .session
+                .active_engine_feature_profile()
                 .normalize_sql_modal_tab(state.sql_modal.active_tab());
             let content = match active_tab {
-                SqlModalTab::Plan => state.explain.plan_text.clone(),
+                SqlModalTab::Plan => state.explain.plan_text().map(str::to_owned),
                 SqlModalTab::Compare => match (&state.explain.left, &state.explain.right) {
                     (Some(l), Some(r)) => {
                         let result = compare_plans(&l.plan, &r.plan);
@@ -71,10 +65,8 @@ pub(super) fn reduce_yank(
                 Some(c) if !c.is_empty() => {
                     DispatchResult::handled_with(vec![Effect::CopyToClipboard {
                         content: c,
-                        on_success: Some(Box::new(Action::SqlModalYankSuccess)),
-                        on_failure: Some(Box::new(Action::CopyFailed(
-                            ClipboardError::Unavailable("Clipboard unavailable".into()),
-                        ))),
+                        on_success: Box::new(Action::SqlModalYankSuccess),
+                        on_failure: Some(Box::new(clipboard_unavailable())),
                     }])
                 }
                 _ => DispatchResult::handled(),

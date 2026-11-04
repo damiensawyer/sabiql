@@ -8,10 +8,9 @@ use crate::app::model::shared::low_scroll::LowScrollSettings;
 use crate::app::model::shared::settings::KeymapPreset;
 use crate::app::model::shared::theme_id::ThemeId;
 use crate::app::ports::outbound::{AppSettings, SettingsStore, SettingsStoreError};
-use crate::config::connection_config::{CURRENT_VERSION, ConfigVersionCheck, ConnectionConfigFile};
-
-#[cfg(test)]
-use super::app_config_file::CONFIG_FILE_NAME;
+use crate::config::{
+    CURRENT_VERSION, ConfigVersionCheck, ConnectionConfigFile, is_supported_config_version,
+};
 
 pub struct TomlSettingsStore {
     config_dir: PathBuf,
@@ -19,7 +18,7 @@ pub struct TomlSettingsStore {
 
 impl TomlSettingsStore {
     pub fn new() -> Result<Self, SettingsStoreError> {
-        let config_dir = get_config_dir()?;
+        let config_dir = app_config_dir()?;
         Ok(Self { config_dir })
     }
 
@@ -27,12 +26,14 @@ impl TomlSettingsStore {
         Self { config_dir }
     }
 
-    fn config_file_path(&self) -> PathBuf {
-        config_file_path(&self.config_dir)
+    pub fn load(&self) -> Result<AppSettings, SettingsStoreError> {
+        Ok(self
+            .load_config_file_lenient()?
+            .map_or_else(AppSettings::default, app_settings))
     }
 
     fn load_config_file_lenient(&self) -> Result<Option<ConnectionConfigFile>, SettingsStoreError> {
-        let path = self.config_file_path();
+        let path = config_file_path(&self.config_dir);
         if !path.exists() {
             return Ok(None);
         }
@@ -42,7 +43,7 @@ impl TomlSettingsStore {
             return Ok(None);
         };
 
-        if version_check.version != CURRENT_VERSION {
+        if !is_supported_config_version(version_check.version) {
             return Ok(None);
         }
 
@@ -53,7 +54,7 @@ impl TomlSettingsStore {
     }
 
     fn load_config_file_strict(&self) -> Result<Option<ConnectionConfigFile>, SettingsStoreError> {
-        let path = self.config_file_path();
+        let path = config_file_path(&self.config_dir);
         if !path.exists() {
             return Ok(None);
         }
@@ -61,7 +62,7 @@ impl TomlSettingsStore {
         let content = fs::read_to_string(&path)?;
         let version_check: ConfigVersionCheck = toml::from_str(&content)?;
 
-        if version_check.version != CURRENT_VERSION {
+        if !is_supported_config_version(version_check.version) {
             return Err(SettingsStoreError::VersionMismatch {
                 found: version_check.version,
                 expected: CURRENT_VERSION,
@@ -73,27 +74,10 @@ impl TomlSettingsStore {
 }
 
 impl SettingsStore for TomlSettingsStore {
-    fn load(&self) -> Result<AppSettings, SettingsStoreError> {
-        Ok(self
-            .load_config_file_lenient()?
-            .map_or_else(AppSettings::default, app_settings))
-    }
-
     fn save(&self, settings: AppSettings) -> Result<(), SettingsStoreError> {
         let _guard = app_config_file::lock();
 
-        let mut config = self
-            .load_config_file_strict()?
-            .unwrap_or_else(|| ConnectionConfigFile {
-                version: CURRENT_VERSION,
-                theme: None,
-                keymap_preset: None,
-                er_browser: None,
-                low_scroll_allow_horizontal_scroll: None,
-                low_scroll_max_lines_per_row: None,
-                low_scroll_format_json: None,
-                connections: vec![],
-            });
+        let mut config = self.load_config_file_strict()?.unwrap_or_default();
         set_app_settings(&mut config, settings);
         let content = toml::to_string_pretty(&config)?;
         let content_with_header = render_config_file(&content);
@@ -101,10 +85,6 @@ impl SettingsStore for TomlSettingsStore {
 
         Ok(())
     }
-}
-
-fn get_config_dir() -> Result<PathBuf, SettingsStoreError> {
-    Ok(app_config_dir()?)
 }
 
 fn app_settings(config: ConnectionConfigFile) -> AppSettings {
@@ -139,9 +119,9 @@ fn set_app_settings(config: &mut ConnectionConfigFile, settings: AppSettings) {
 
 #[cfg(test)]
 mod tests {
+    use super::app_config_file::CONFIG_FILE_NAME;
+
     use super::*;
-    use crate::app::model::shared::settings::KeymapPreset;
-    use crate::app::model::shared::theme_id::ThemeId;
     use tempfile::TempDir;
 
     #[test]

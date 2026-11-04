@@ -5,15 +5,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::app::model::app_state::AppState;
-use crate::app::model::connection::list::{
-    ConnectionListItem, has_last_connection,
-};
+use crate::app::model::connection::list::{self, ConnectionListItem};
 use crate::app::update::input::keybindings::connection_selector;
 use crate::domain::connection::ConnectionId;
 use crate::primitives::atoms::scroll_indicator::{
     VerticalScrollParams, render_vertical_scroll_indicator_bar,
 };
-use crate::primitives::molecules::{FooterHintBar, FooterHintItem, render_modal};
+use crate::primitives::molecules::{FooterHintBar, render_modal};
 use crate::theme::ThemePalette;
 
 const PREFIX_DISPLAY_WIDTH: usize = 2;
@@ -24,12 +22,14 @@ pub struct ConnectionSelector;
 
 impl ConnectionSelector {
     pub fn render(frame: &mut Frame, state: &AppState, theme: &ThemePalette) -> u16 {
-        let has_last = has_last_connection(state.connection_list_items());
-        let is_service_selected = crate::app::model::connection::list::is_service_selected(
-            state.connection_list_items(),
-            state.ui.connection_list_selected,
+        let has_last = list::has_last_connection(state.connection_list_items());
+        let is_profile_selected = matches!(
+            state
+                .connection_list_items()
+                .get(state.ui.connection_list_selected()),
+            Some(ConnectionListItem::Profile(_))
         );
-        let hint = Self::build_hints(is_service_selected, has_last);
+        let hint = Self::build_hints(is_profile_selected, state.has_connection_delete_undo());
         let (_outer, inner) = render_modal(
             frame,
             Constraint::Percentage(60),
@@ -52,25 +52,23 @@ impl ConnectionSelector {
         state: &AppState,
         theme: &ThemePalette,
     ) -> u16 {
-        let all_items = state.connection_list_items();
-        let last_conn_item = match all_items.first() {
-            Some(ConnectionListItem::LastConnection) => all_items[0].clone(),
-            _ => return area.height,
-        };
+        if !list::has_last_connection(state.connection_list_items()) {
+            return area.height;
+        }
 
         // Determine the last connection profile for display
-        let last_conn_display = if let ConnectionListItem::LastConnection = last_conn_item {
-            state
-                .last_connection_profile()
-                .map(|c| c.display_name().to_string())
-        } else {
-            None
-        };
+        let last_conn_display = state
+            .last_connection_profile()
+            .map(|c| c.display_name().to_string());
 
         let total_height = area.height;
         // Reserve 1 line for the last connection, 1 for divider
         let bottom_available = total_height.saturating_sub(DIVIDER_HEIGHT + 2);
-        let bottom_height = if bottom_available >= 2 { bottom_available } else { total_height };
+        let bottom_height = if bottom_available >= 2 {
+            bottom_available
+        } else {
+            total_height
+        };
         let last_height = if total_height > bottom_height + DIVIDER_HEIGHT + 1 {
             total_height - bottom_height - DIVIDER_HEIGHT
         } else {
@@ -86,7 +84,7 @@ impl ConnectionSelector {
 
         // Top panel: last connection — real List widget so the cursor moves here on Tab
         if let Some(name) = last_conn_display {
-            let is_selected = state.ui.connection_list_selected == 0;
+            let is_selected = state.ui.connection_list_selected() == 0;
             let style = if is_selected {
                 Style::default()
                     .fg(theme.semantic.text.accent)
@@ -104,15 +102,15 @@ impl ConnectionSelector {
                 )
                 .highlight_symbol(">");
 
-            let mut top_list_state = ListState::default()
-                .with_selected(if is_selected { Some(0) } else { None });
+            let mut top_list_state =
+                ListState::default().with_selected(if is_selected { Some(0) } else { None });
             frame.render_stateful_widget(list, chunks[0], &mut top_list_state);
         }
 
         // Divider
         let divider_text = "────────────────────────────────────";
-        let divider_para = Paragraph::new(divider_text)
-            .style(Style::default().fg(theme.semantic.text.muted));
+        let divider_para =
+            Paragraph::new(divider_text).style(Style::default().fg(theme.semantic.text.muted));
         frame.render_widget(divider_para, chunks[1]);
 
         // Bottom panel: regular connections
@@ -120,25 +118,20 @@ impl ConnectionSelector {
         area.height
     }
 
-    fn build_hints(
-        is_service_selected: bool,
-        has_last: bool,
-    ) -> Vec<FooterHintItem> {
+    fn build_hints(is_profile_selected: bool, has_undo: bool) -> Vec<(&'static str, &'static str)> {
         use connection_selector as cs;
 
-        let mut hints = vec![
-            FooterHintItem::new(cs::CONFIRM.key_short, cs::CONFIRM.desc_short),
-            FooterHintItem::new(cs::NEW.key_short, cs::NEW.desc_short),
-        ];
-        if !is_service_selected {
-            hints.push(FooterHintItem::new(cs::EDIT.key_short, cs::EDIT.desc_short));
-            hints.push(FooterHintItem::new(cs::DELETE.key_short, cs::DELETE.desc_short));
-            hints.push(FooterHintItem::new(cs::DUPLICATE.key_short, cs::DUPLICATE.desc_short));
+        let mut hints = vec![cs::CONFIRM.as_hint(), cs::NEW.as_hint()];
+        // EDIT/DELETE/DUP only apply to saved profiles (not services or the "last" shortcut)
+        if is_profile_selected {
+            hints.push(cs::EDIT.as_hint());
+            hints.push(cs::DELETE.as_hint());
+            hints.push(cs::DUPLICATE.as_hint());
         }
-        if has_last {
-            hints.push(FooterHintItem::new("u", "Undo").disabled());
+        if has_undo {
+            hints.push(cs::UNDO.as_hint());
         }
-        hints.push(FooterHintItem::new(cs::CLOSE.key_short, cs::CLOSE.desc_short));
+        hints.push(cs::CLOSE.as_hint());
 
         hints
     }
@@ -217,15 +210,14 @@ pub fn render_connection_list(
     theme: &ThemePalette,
     has_top_panel: bool,
 ) -> u16 {
-    let active_id = state.session.active_connection_id.as_ref();
+    let active_id = state.session.active_connection_id();
 
     // highlight_symbol "> " takes 2 columns
     let content_width = area.width.saturating_sub(2) as usize;
     let source_label = "from pg_service.conf";
 
     // Bottom panel excludes LastConnection (already shown in top panel)
-    let bottom_items =
-        crate::app::model::connection::list::bottom_panel_items(state.connection_list_items());
+    let bottom_items = list::bottom_panel_items(state.connection_list_items());
     let items: Vec<ListItem> = if bottom_items.is_empty() {
         vec![ListItem::new(" No connections")]
     } else {
@@ -267,15 +259,16 @@ pub fn render_connection_list(
     // by one (the LastConnection item at index 0 is excluded). Adjust the
     // highlight index accordingly so the selection marker appears on the
     // correct visual row.
-    let adjusted_selected = if has_top_panel && state.ui.connection_list_selected > 0 {
-        state.ui.connection_list_selected - 1
+    let selected = state.ui.connection_list_selected();
+    let adjusted_selected = if has_top_panel && selected > 0 {
+        selected - 1
     } else {
-        state.ui.connection_list_selected
+        selected
     };
 
     let mut list_state = ListState::default()
         .with_selected(Some(adjusted_selected))
-        .with_offset(state.ui.connection_list_scroll_offset);
+        .with_offset(state.ui.connection_list_scroll_offset());
     frame.render_stateful_widget(list, area, &mut list_state);
 
     if !bottom_items.is_empty() {
@@ -283,7 +276,7 @@ pub fn render_connection_list(
         let viewport_size = area.height as usize;
 
         if total_items > viewport_size {
-            let scroll_offset = state.ui.connection_list_scroll_offset;
+            let scroll_offset = state.ui.connection_list_scroll_offset();
 
             render_vertical_scroll_indicator_bar(
                 frame,

@@ -8,7 +8,39 @@
 //! This module is pure: it takes widths/text/available space and returns the
 //! computed layout. Rendering lives in the UI layer; this is the geometry.
 
+use std::borrow::Cow;
+
 use unicode_width::UnicodeWidthStr;
+
+use crate::domain::QueryValue;
+
+/// A result cell that can be rendered as display text. Lets the layout engine
+/// measure both raw typed result values and pre-formatted display strings
+/// without first copying every row into a `Vec<String>`.
+pub trait CellText {
+    fn cell_text(&self) -> Cow<'_, str>;
+
+    /// True for SQL `NULL` cells (skipped by JSON column detection).
+    fn is_null(&self) -> bool {
+        false
+    }
+}
+
+impl CellText for String {
+    fn cell_text(&self) -> Cow<'_, str> {
+        Cow::Borrowed(self)
+    }
+}
+
+impl CellText for QueryValue {
+    fn cell_text(&self) -> Cow<'_, str> {
+        self.display_value_ref()
+    }
+
+    fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+}
 
 /// Number of terminal lines `text` occupies when wrapped at `width` display
 /// cells. Each explicit newline starts a new line; long lines wrap. A width
@@ -101,6 +133,7 @@ pub struct LowScrollLayoutKey {
     pub inner_width: u16,
     pub allow_horizontal_scroll: bool,
     pub max_lines_per_row: Option<u16>,
+    pub format_json: bool,
 }
 
 /// Per-row line heights the scroll reducer needs to keep the active row visible.
@@ -279,9 +312,9 @@ fn total_width_with_separators(widths: &[u16]) -> u16 {
 /// `padding` is the per-cell horizontal padding (matches `PADDING` in
 /// `text_utils`), subtracted from a column width to get the wrap width.
 #[must_use]
-pub fn compute_layout(
+pub fn compute_layout<C: CellText>(
     headers: &[String],
-    rows: &[Vec<String>],
+    rows: &[Vec<C>],
     ideal_widths: &[u16],
     available_width: u16,
     settings: &LowScrollSettings,
@@ -419,8 +452,8 @@ fn narrowest_index(widths: &[u16]) -> Option<usize> {
 
 /// Compute the layout (height + truncation flag) for a single row given the
 /// final column widths.
-pub fn row_layout(
-    row: &[String],
+pub fn row_layout<C: CellText>(
+    row: &[C],
     column_widths: &[u16],
     padding: u16,
     row_cap: Option<u16>,
@@ -442,12 +475,12 @@ pub fn row_layout(
 }
 
 /// Maximum wrapped line count across the cells of a row.
-fn max_wrapped_lines(row: &[String], column_widths: &[u16], padding: u16) -> u16 {
+fn max_wrapped_lines<C: CellText>(row: &[C], column_widths: &[u16], padding: u16) -> u16 {
     row.iter()
         .enumerate()
         .map(|(col_idx, cell)| {
             column_widths.get(col_idx).map_or(1, |&col_width| {
-                LowScrollSettings::wrapped_cell_lines(cell, col_width, padding)
+                LowScrollSettings::wrapped_cell_lines(&cell.cell_text(), col_width, padding)
             })
         })
         .max()
@@ -455,10 +488,10 @@ fn max_wrapped_lines(row: &[String], column_widths: &[u16], padding: u16) -> u16
 }
 
 /// True when any cell in the row wraps to more lines than `cap`.
-fn overflowed_any(row: &[String], column_widths: &[u16], padding: u16, cap: u16) -> bool {
+fn overflowed_any<C: CellText>(row: &[C], column_widths: &[u16], padding: u16, cap: u16) -> bool {
     row.iter().enumerate().any(|(col_idx, cell)| {
         column_widths.get(col_idx).is_some_and(|&col_width| {
-            LowScrollSettings::wrapped_cell_lines(cell, col_width, padding) > cap
+            LowScrollSettings::wrapped_cell_lines(&cell.cell_text(), col_width, padding) > cap
         })
     })
 }
@@ -595,7 +628,7 @@ mod tests {
 
         #[test]
         fn empty_columns_returns_empty_layout() {
-            let layout = compute_layout(&[], &[], &[], 40, &settings(false, None), 2);
+            let layout = compute_layout::<String>(&[], &[], &[], 40, &settings(false, None), 2);
 
             assert!(layout.columns.is_empty());
             assert!(layout.rows.is_empty());
@@ -671,7 +704,7 @@ mod tests {
         #[test]
         fn empty_cell_row_has_min_height_one() {
             let headers = vec!["a".to_string()];
-            let rows = vec![vec!["".to_string()]];
+            let rows = vec![vec![String::new()]];
             let ideal = vec![12];
 
             let layout = compute_layout(&headers, &rows, &ideal, 12, &settings(false, None), 2);

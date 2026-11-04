@@ -1,79 +1,94 @@
 use std::time::Instant;
 
+use crate::domain::DatabaseType;
 use crate::model::app_state::AppState;
-use crate::model::shared::text_input::TextInputLike;
-use crate::policy::sql::statement_classifier::{self, StatementKind};
 use crate::policy::write::sql_risk::{
-    ConfirmationType, MultiStatementDecision, evaluate_multi_statement,
+    ConfirmationType, MultiStatementDecision, SqlRiskDecision,
+    evaluate_multi_statement_for_database_with_context,
+    evaluate_mysql_multi_statement_with_lower_case_table_names,
 };
-use crate::policy::write::write_guardrails::{AdhocRiskDecision, RiskLevel, evaluate_sql_risk};
+use crate::policy::write::write_guardrails::AdhocRiskDecision;
 use crate::update::action::Action;
 use crate::update::dispatch_result::DispatchResult;
+use crate::update::helpers::reject_pending_mysql_connection_probe;
 
 use super::helpers::start_adhoc_if_connected;
 
-fn multi_statement_label(sql: &str) -> &'static str {
-    use crate::policy::write::sql_risk::split_statements;
-    let mut worst_level = RiskLevel::Low;
-    let mut worst_label = "SQL";
-    for stmt in split_statements(sql) {
-        let kind = statement_classifier::classify(&stmt);
-        let d = evaluate_sql_risk(&kind);
-        if d.risk_level > worst_level || (d.risk_level == worst_level && d.label != "SQL") {
-            worst_level = d.risk_level;
-            worst_label = d.label;
-        }
+fn into_submit_result<Statement>(
+    decision: MultiStatementDecision<Statement>,
+) -> Result<SqlRiskDecision, String> {
+    match decision {
+        MultiStatementDecision::Block { reason } => Err(reason),
+        MultiStatementDecision::Allow { risk, .. } => Ok(risk),
     }
-    worst_label
 }
+
 pub(super) fn reduce_submit(state: &mut AppState, action: &Action, now: Instant) -> DispatchResult {
     match action {
         Action::SqlModalSubmit => {
+            if reject_pending_mysql_connection_probe(state) {
+                return DispatchResult::handled();
+            }
             let query = state.sql_modal.editor.content().trim().to_string();
             if query.is_empty() {
                 return DispatchResult::handled();
             }
             state.sql_modal.dismiss_completion();
 
-            match evaluate_multi_statement(&query) {
-                MultiStatementDecision::Block { reason } => {
+            let database_type = state.session.active_database_type_or_default();
+
+            let decision = if database_type == DatabaseType::MySQL {
+                into_submit_result(evaluate_mysql_multi_statement_with_lower_case_table_names(
+                    &query,
+                    state.session.active_database(),
+                    state.session.mysql_lower_case_table_names(),
+                ))
+            } else {
+                into_submit_result(evaluate_multi_statement_for_database_with_context(
+                    database_type,
+                    state.session.active_database(),
+                    &query,
+                ))
+            };
+
+            match decision {
+                Err(reason) => {
                     state.sql_modal.finish_adhoc_error(reason);
                     DispatchResult::handled()
                 }
-                MultiStatementDecision::Allow {
-                    risk,
-                    ref statements,
-                } => {
-                    let label = multi_statement_label(&query);
-                    let decision = AdhocRiskDecision {
-                        risk_level: risk.risk_level,
-                        label,
-                    };
-                    // In read-only mode, block if any statement is a write operation
-                    let has_write = statements.iter().any(|s| {
-                        let kind = statement_classifier::classify(s);
-                        !matches!(kind, StatementKind::Select | StatementKind::Transaction)
-                    });
-                    if state.session.read_only && has_write {
-                        state.sql_modal.finish_adhoc_error(
-                            "Read-only mode: write operations are disabled".to_string(),
-                        );
-                        return DispatchResult::handled();
-                    }
-                    match risk.confirmation {
-                        ConfirmationType::Immediate => start_adhoc_if_connected(state, query, now),
-                        ConfirmationType::Acknowledge { reason, label } => {
-                            state.sql_modal.begin_confirming_risk(reason, label);
-                            DispatchResult::handled()
-                        }
-                        ConfirmationType::TableNameInput { target } => {
-                            state.sql_modal.begin_confirming_high(decision, target);
-                            DispatchResult::handled()
-                        }
-                    }
-                }
+                Ok(risk) => handle_allowed_query(state, query, now, risk),
             }
         }
         _ => DispatchResult::pass(),
+    }
+}
+
+fn handle_allowed_query(
+    state: &mut AppState,
+    query: String,
+    now: Instant,
+    risk: SqlRiskDecision,
+) -> DispatchResult {
+    if state.session.is_read_only() && !risk.read_only_allowed {
+        state
+            .sql_modal
+            .finish_adhoc_error("Read-only mode: write operations are disabled".to_string());
+        return DispatchResult::handled();
+    }
+
+    match risk.confirmation {
+        ConfirmationType::Immediate => start_adhoc_if_connected(state, query, now),
+        ConfirmationType::Acknowledge { reason, label } => {
+            state.sql_modal.begin_confirming_risk(reason, label);
+            DispatchResult::handled()
+        }
+        ConfirmationType::TableNameInput { target, label } => {
+            let decision = AdhocRiskDecision {
+                risk_level: risk.risk_level,
+                label,
+            };
+            state.sql_modal.begin_confirming_high(decision, target);
+            DispatchResult::handled()
+        }
     }
 }

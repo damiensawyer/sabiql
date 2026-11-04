@@ -4,8 +4,10 @@ use crate::cmd::effect::Effect;
 use crate::model::app_state::AppState;
 use crate::model::shared::confirm_dialog::ConfirmIntent;
 use crate::model::shared::input_mode::InputMode;
+use crate::ports::outbound::AccessMode;
 use crate::update::action::{Action, ScrollAmount, ScrollTarget};
 use crate::update::dispatch_result::DispatchResult;
+use crate::update::helpers::reject_pending_mysql_connection_probe;
 
 pub(super) fn reduce_confirm_dialog(
     state: &mut AppState,
@@ -18,12 +20,7 @@ pub(super) fn reduce_confirm_dialog(
             direction,
             amount: ScrollAmount::Line,
         } => {
-            let max_scroll = state.confirm_dialog.max_scroll() as usize;
-            state.confirm_dialog.preview_scroll = direction.clamp_vertical_offset(
-                state.confirm_dialog.preview_scroll as usize,
-                max_scroll,
-                1,
-            ) as u16;
+            state.confirm_dialog.scroll_preview(*direction);
             DispatchResult::handled()
         }
         Action::ConfirmDialogConfirm => {
@@ -33,12 +30,11 @@ pub(super) fn reduce_confirm_dialog(
             match intent {
                 Some(ConfirmIntent::QuitNoConnection) => {
                     state.should_quit = true;
-                    DispatchResult::handled()
+                    DispatchResult::handled_with(vec![Effect::CancelTrackedTasks])
                 }
-                Some(ConfirmIntent::DeleteConnection(_)) => {
-                    // Delete is now immediate; this branch shouldn't be reached.
-                    DispatchResult::handled()
-                }
+                Some(ConfirmIntent::DeleteConnection(id)) => DispatchResult::handled_with(vec![
+                    Effect::DispatchActions(vec![Action::DeleteConnection(id)]),
+                ]),
                 Some(ConfirmIntent::ExecuteWrite { blocked: true, .. }) => {
                     state.result_interaction.clear_write_preview();
                     state.query.clear_delete_refresh_target();
@@ -48,47 +44,71 @@ pub(super) fn reduce_confirm_dialog(
                     sql,
                     blocked: false,
                 }) => {
-                    if let Some(dsn) = &state.session.dsn {
-                        let run_id = state.query.begin_running(now);
+                    if reject_pending_mysql_connection_probe(state) {
+                        state.result_interaction.clear_write_preview();
+                        state.query.clear_delete_refresh_target();
+                        return DispatchResult::handled();
+                    }
+                    if let Some(dsn) = state.session.dsn().map(String::from) {
+                        let run_id = state.query.begin_non_preview_running(now);
                         DispatchResult::handled_with(vec![Effect::ExecuteWrite {
-                            dsn: dsn.clone(),
+                            dsn,
                             run_id,
                             query: sql,
-                            read_only: state.session.read_only,
+                            access_mode: AccessMode::from_read_only(state.session.is_read_only()),
                         }])
                     } else {
                         state.result_interaction.clear_write_preview();
                         state.query.clear_delete_refresh_target();
-                        state
-                            .messages
-                            .set_error_at("No active connection".to_string(), now);
+                        state.messages.set_error("No active connection".to_string());
                         DispatchResult::handled()
                     }
                 }
                 Some(ConfirmIntent::DisableReadOnly) => {
-                    state.session.read_only = false;
+                    state.session.disable_read_only();
                     DispatchResult::handled()
                 }
-                Some(ConfirmIntent::CsvExport {
+                Some(ConfirmIntent::CsvExportRerunnable {
                     dsn,
                     run_id,
                     export_query,
                     file_name,
-                    row_count,
                 }) => {
-                    if state.session.dsn.as_ref() == Some(&dsn)
-                        && state.query.is_current_run(run_id)
-                    {
+                    if reject_pending_mysql_connection_probe(state) {
+                        return DispatchResult::handled();
+                    }
+                    if state.is_stale_query_run(&dsn, run_id) {
+                        DispatchResult::handled()
+                    } else {
                         DispatchResult::handled_with(vec![Effect::ExportCsv {
                             dsn,
                             run_id,
                             query: export_query,
                             file_name,
-                            row_count,
-                            read_only: state.session.read_only,
                         }])
-                    } else {
+                    }
+                }
+                Some(ConfirmIntent::CsvExportCached {
+                    dsn,
+                    run_id,
+                    file_name,
+                    row_count,
+                    snapshot,
+                }) => {
+                    if reject_pending_mysql_connection_probe(state) {
+                        return DispatchResult::handled();
+                    }
+                    if state.is_stale_query_run(&dsn, run_id) {
                         DispatchResult::handled()
+                    } else {
+                        DispatchResult::handled_with(vec![Effect::ExportCsvFromCache {
+                            dsn,
+                            run_id,
+                            file_name,
+                            columns: snapshot.columns,
+                            values: snapshot.values,
+                            row_count,
+                        }])
                     }
                 }
                 None => DispatchResult::handled(),
@@ -96,13 +116,23 @@ pub(super) fn reduce_confirm_dialog(
         }
         Action::ConfirmDialogCancel => {
             let intent = state.confirm_dialog.take_intent();
+            let canceling_current_csv_export = match &intent {
+                Some(
+                    ConfirmIntent::CsvExportRerunnable { dsn, run_id, .. }
+                    | ConfirmIntent::CsvExportCached { dsn, run_id, .. },
+                ) => !state.is_stale_query_run(dsn, *run_id),
+                _ => false,
+            };
             state.result_interaction.clear_write_preview();
             state.query.clear_delete_refresh_target();
+            if canceling_current_csv_export {
+                state.query.mark_idle();
+            }
 
             if matches!(intent, Some(ConfirmIntent::QuitNoConnection)) {
                 state.connection_setup.reset();
-                if !state.connections().is_empty() || state.session.dsn.is_some() {
-                    state.connection_setup.is_first_run = false;
+                if !state.connections().is_empty() || state.session.dsn().is_some() {
+                    state.connection_setup.set_first_run(false);
                 }
                 state.modal.pop_mode_override(InputMode::ConnectionSetup);
                 DispatchResult::handled()

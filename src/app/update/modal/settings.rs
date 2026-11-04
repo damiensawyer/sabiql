@@ -69,6 +69,28 @@ pub(super) fn reduce_settings(
             state.settings.delete_custom_browser();
             DispatchResult::handled()
         }
+        Action::TextKill {
+            target: InputTarget::SettingsErBrowser,
+            direction,
+        } => {
+            if let Some(killed) = state
+                .settings
+                .edit_custom_browser(|input| input.kill(*direction))
+            {
+                state.record_kill(killed);
+            }
+            DispatchResult::handled()
+        }
+        Action::TextYank {
+            target: InputTarget::SettingsErBrowser,
+        } => {
+            if let Some(killed) = state.kill_buffer().map(str::to_owned) {
+                state
+                    .settings
+                    .edit_custom_browser(|input| input.yank(&killed));
+            }
+            DispatchResult::handled()
+        }
         Action::TextMoveCursor {
             target: InputTarget::SettingsErBrowser,
             direction,
@@ -109,7 +131,7 @@ pub(super) fn reduce_settings(
         Action::SettingsSaveFailed(error) => {
             state
                 .messages
-                .set_error_at(format!("Failed to save settings: {error}"), now);
+                .set_error(format!("Failed to save settings: {error}"));
             DispatchResult::handled()
         }
         _ => DispatchResult::pass(),

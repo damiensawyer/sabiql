@@ -1,22 +1,18 @@
-use std::time::Instant;
-
 use crate::cmd::effect::Effect;
 use crate::model::app_state::AppState;
 use crate::model::shared::input_mode::InputMode;
+use crate::model::shared::text_input::TextInputState;
 use crate::update::action::{Action, InputTarget, ListMotion, ListTarget, ModalKind};
 use crate::update::dispatch_result::DispatchResult;
+use crate::update::helpers::reject_pending_mysql_connection_probe;
 
-pub(super) fn reduce_query_history_picker(
-    state: &mut AppState,
-    action: &Action,
-    now: Instant,
-) -> DispatchResult {
+pub(super) fn reduce_query_history_picker(state: &mut AppState, action: &Action) -> DispatchResult {
     match action {
         Action::OpenModal(ModalKind::QueryHistoryPicker) => {
             if state.modal.active_mode() == InputMode::QueryHistoryPicker {
                 return DispatchResult::handled();
             }
-            if state.session.active_connection_id.is_none() {
+            if state.session.active_connection_id().is_none() {
                 return DispatchResult::handled();
             }
             if state.query.is_running() {
@@ -34,10 +30,13 @@ pub(super) fn reduce_query_history_picker(
             state.query_history_picker.reset();
             state.modal.push_mode(InputMode::QueryHistoryPicker);
 
-            let conn_id = state.session.active_connection_id.as_ref().unwrap();
+            let scope = state
+                .session
+                .query_history_scope()
+                .expect("active connection checked above");
             DispatchResult::handled_with(vec![Effect::LoadQueryHistory {
-                project_name: state.runtime.project_name.clone(),
-                connection_id: conn_id.clone(),
+                project_name: state.project_name().to_string(),
+                scope,
             }])
         }
         Action::CloseModal(ModalKind::QueryHistoryPicker) => {
@@ -45,27 +44,26 @@ pub(super) fn reduce_query_history_picker(
             state.query_history_picker.reset();
             DispatchResult::handled()
         }
-        Action::QueryHistoryLoaded(conn_id, entries) => {
+        Action::QueryHistoryLoaded(scope, entries) => {
             if state.modal.active_mode() != InputMode::QueryHistoryPicker {
                 return DispatchResult::handled();
             }
-            if state.session.active_connection_id.as_ref() != Some(conn_id) {
+            if state.session.query_history_scope().as_ref() != Some(scope) {
                 return DispatchResult::handled();
             }
             state.query_history_picker.replace_entries(entries);
             DispatchResult::handled()
         }
-        Action::QueryHistoryLoadFailed(conn_id, e) => {
+        Action::QueryHistoryLoadFailed(scope, error) => {
             if state.modal.active_mode() != InputMode::QueryHistoryPicker {
                 return DispatchResult::handled();
             }
-            if state.session.active_connection_id.as_ref() != Some(conn_id) {
+            if state.session.query_history_scope().as_ref() != Some(scope) {
                 return DispatchResult::handled();
             }
-            state.messages.set_error_at(e.to_string(), now);
+            state.messages.set_error(error.clone());
             DispatchResult::handled()
         }
-        Action::QueryHistoryAppendFailed(_) => DispatchResult::handled(),
         Action::TextInput {
             target: InputTarget::QueryHistoryFilter,
             ch: c,
@@ -77,6 +75,34 @@ pub(super) fn reduce_query_history_picker(
             target: InputTarget::QueryHistoryFilter,
         } => {
             state.query_history_picker.backspace_filter();
+            DispatchResult::handled()
+        }
+        Action::TextDelete {
+            target: InputTarget::QueryHistoryFilter,
+        } => {
+            state
+                .query_history_picker
+                .edit_filter(TextInputState::delete);
+            DispatchResult::handled()
+        }
+        Action::TextKill {
+            target: InputTarget::QueryHistoryFilter,
+            direction,
+        } => {
+            let killed = state
+                .query_history_picker
+                .edit_filter(|input| input.kill(*direction));
+            state.record_kill(killed);
+            DispatchResult::handled()
+        }
+        Action::TextYank {
+            target: InputTarget::QueryHistoryFilter,
+        } => {
+            if let Some(killed) = state.kill_buffer().map(str::to_owned) {
+                state
+                    .query_history_picker
+                    .edit_filter(|input| input.yank(&killed));
+            }
             DispatchResult::handled()
         }
         Action::TextMoveCursor {
@@ -101,6 +127,9 @@ pub(super) fn reduce_query_history_picker(
             DispatchResult::handled()
         }
         Action::QueryHistoryConfirmSelection => {
+            if reject_pending_mysql_connection_probe(state) {
+                return DispatchResult::handled();
+            }
             let grouped = state.query_history_picker.grouped_filtered_entries();
             let selected = state.query_history_picker.clamped_selected();
             let query = grouped.get(selected).map(|g| g.entry.query.clone());
@@ -147,7 +176,6 @@ mod tests {
                 target: InputTarget::QueryHistoryFilter,
                 direction: CursorMove::Right,
             },
-            Instant::now(),
         );
 
         assert!(result.is_handled());

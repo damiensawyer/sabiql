@@ -2,7 +2,7 @@
 source: src/tests/render_snapshots/overlays.rs
 expression: output
 ---
-test_project | test_db | - | no dsn | localhost:5432/test                                                                                                            
+test_project ▸ test_db ▸ -                                                                                                            connected | localhost:5432/test
 ┌ [1] Explorer ─────────────────────────┐[Info] [Cols] [Idx] [FK] [RLS] [Trig] [DDL]                                                                                 
 │> public.users                         │┌ [2] Inspector ───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │  public.posts                         ││(select a table)                                                                                                          │
@@ -17,7 +17,7 @@ test_project | test_db | - | no dsn | localhost:5432/test
 │                        │                                                                                                                ┃│                        │
 │                        │▸ Common                                                                                                        ┃│                        │
 │                        │  ?                                            Toggle help                                                      ┃│                        │
-│                        │  q                                            Quit application                                                 ┃│                        │
+│                        │  q                                            Quit application                                                 ││                        │
 │                        │  ,                                            Open Settings                                                    ││                        │
 │                        │  F1                                           Open Command Palette                                             ││                        │
 │                        │  :                                            Enter command line                                               ││                        │
@@ -44,11 +44,10 @@ test_project | test_db | - | no dsn | localhost:5432/test
 │                        │  c                                            Open Connection Selector                                         ││                        │
 │                        │  Ctrl+O                                       Open Query History                                               ││                        │
 │                        │  1/2/3                                        Switch pane focus                                                ││                        │
-│                        │  Tab/⇧Tab                                     Inspector prev/next tab                                          ││                        │
-│                        │                                                                                                                ││                        │
-│                        │▸ Data Actions                                                                                                  ▼│                        │
-│                        ╰ type: Filter │ Backspace: Edit │ Esc: Close │ ?: Close ─────────────────────────────────────────────────────────╯                        │
+│                        │  Tab/⇧Tab                                     Inspector prev/next tab                                          ▼│                        │
+│                        │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────│                        │
+│                        │ [BROWSE]                                                                                                        │                        │
+│                        ╰ /: Filter │ Esc: Close │ ?: Close ──────────────────────────────────────────────────────────────────────────────╯                        │
 │                                       ││                                                                                                                          │
 │                                       ││                                                                                                                          │
 └───────────────────────────────────────┘└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-←→:H-Scroll  ?:Close

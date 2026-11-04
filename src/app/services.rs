@@ -1,88 +1,40 @@
 use std::sync::Arc;
 
-use super::ports::outbound::{DdlGenerator, DsnBuilder, SqlDialect};
-use crate::model::shared::db_capabilities::DbCapabilities;
+use super::ports::outbound::{DdlGenerator, DsnBuilder};
 
 pub struct AppServices {
     pub ddl_generator: Arc<dyn DdlGenerator>,
-    pub sql_dialect: Arc<dyn SqlDialect>,
     pub dsn_builder: Arc<dyn DsnBuilder>,
-    pub db_capabilities: DbCapabilities,
 }
 
-impl AppServices {
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
-    pub fn stub() -> Self {
-        struct StubDdlGenerator;
-        impl DdlGenerator for StubDdlGenerator {
-            fn generate_ddl(&self, _table: &crate::domain::Table) -> String {
-                unimplemented!("inject a real DdlGenerator via AppServices")
-            }
-            fn ddl_line_count(&self, _table: &crate::domain::Table) -> usize {
-                0
-            }
-        }
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
+    use std::sync::Arc;
 
-        struct StubSqlDialect;
-        impl SqlDialect for StubSqlDialect {
-            fn build_explain_sql(&self, query: &str) -> Option<String> {
-                Some(format!("EXPLAIN {query}"))
+    use super::{AppServices, DdlGenerator, DsnBuilder};
+    use crate::domain::{ConnectionProfile, DatabaseType, Table};
+
+    impl AppServices {
+        #[doc(hidden)]
+        pub fn stub() -> Self {
+            struct StubDdlGenerator;
+            impl DdlGenerator for StubDdlGenerator {
+                fn generate_ddl(&self, _database_type: DatabaseType, _table: &Table) -> String {
+                    String::new()
+                }
             }
 
-            fn build_explain_analyze_sql(&self, query: &str) -> Option<String> {
-                Some(format!("EXPLAIN ANALYZE {query}"))
+            struct StubDsnBuilder;
+            impl DsnBuilder for StubDsnBuilder {
+                fn build_dsn(&self, _profile: &ConnectionProfile) -> String {
+                    "stub-dsn".to_string()
+                }
             }
 
-            fn build_update_sql(
-                &self,
-                schema: &str,
-                table: &str,
-                column: &str,
-                new_value: &str,
-                pk_pairs: &[(String, String)],
-            ) -> String {
-                let set_clause = format!("\"{column}\" = '{new_value}'");
-                let where_clause = pk_pairs
-                    .iter()
-                    .map(|(key, value)| format!("\"{key}\" = '{value}'"))
-                    .collect::<Vec<_>>()
-                    .join(" AND ");
-                format!("UPDATE \"{schema}\".\"{table}\" SET {set_clause} WHERE {where_clause}")
+            Self {
+                ddl_generator: Arc::new(StubDdlGenerator),
+                dsn_builder: Arc::new(StubDsnBuilder),
             }
-            fn build_bulk_delete_sql(
-                &self,
-                schema: &str,
-                table: &str,
-                pk_pairs_per_row: &[Vec<(String, String)>],
-            ) -> String {
-                let where_clause = pk_pairs_per_row
-                    .iter()
-                    .map(|pk_pairs| {
-                        pk_pairs
-                            .iter()
-                            .map(|(key, value)| format!("\"{key}\" = '{value}'"))
-                            .collect::<Vec<_>>()
-                            .join(" AND ")
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" OR ");
-                format!("DELETE FROM \"{schema}\".\"{table}\" WHERE {where_clause}")
-            }
-        }
-
-        struct StubDsnBuilder;
-        impl DsnBuilder for StubDsnBuilder {
-            fn build_dsn(&self, _profile: &crate::domain::connection::ConnectionProfile) -> String {
-                "stub-dsn".to_string()
-            }
-        }
-
-        Self {
-            ddl_generator: Arc::new(StubDdlGenerator),
-            sql_dialect: Arc::new(StubSqlDialect),
-            dsn_builder: Arc::new(StubDsnBuilder),
-            db_capabilities: DbCapabilities::postgres_like(),
         }
     }
 }

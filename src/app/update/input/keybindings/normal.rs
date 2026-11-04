@@ -241,6 +241,27 @@ pub mod global {
         action: Action::OpenModal(ModalKind::QueryHistoryPicker),
         combos: &[KeyCombo::plain(Key::Char('O'))],
     };
+
+    pub const SQLITE_DIAGNOSTICS: KeyBinding = KeyBinding {
+        key_short: "^⇧D",
+        key: "Ctrl+Shift+D",
+        desc_short: "Diagnostics",
+        description: "Open SQLite Diagnostics",
+        action: Action::OpenModal(ModalKind::SqliteDiagnostics),
+        combos: &[
+            KeyCombo::ctrl_shift(Key::Char('d')),
+            KeyCombo::ctrl(Key::Char('D')),
+        ],
+    };
+
+    pub const SQLITE_DIAGNOSTICS_IDE: KeyBinding = KeyBinding {
+        key_short: "D",
+        key: "D",
+        desc_short: "Diagnostics",
+        description: "Open SQLite Diagnostics",
+        action: Action::OpenModal(ModalKind::SqliteDiagnostics),
+        combos: &[KeyCombo::plain(Key::Char('D'))],
+    };
 }
 
 pub const DEFAULT_GLOBAL_KEYS: &[KeyBinding] = &[
@@ -263,6 +284,7 @@ pub const DEFAULT_GLOBAL_KEYS: &[KeyBinding] = &[
     global::READ_ONLY,
     global::EXIT_READ_ONLY,
     global::QUERY_HISTORY,
+    global::SQLITE_DIAGNOSTICS,
 ];
 
 pub const IDE_GLOBAL_KEYS: &[KeyBinding] = &[
@@ -285,6 +307,7 @@ pub const IDE_GLOBAL_KEYS: &[KeyBinding] = &[
     global::READ_ONLY_IDE,
     global::EXIT_READ_ONLY_IDE,
     global::QUERY_HISTORY_IDE,
+    global::SQLITE_DIAGNOSTICS_IDE,
 ];
 
 pub const GLOBAL_KEYS: &[KeyBinding] = DEFAULT_GLOBAL_KEYS;
@@ -339,6 +362,13 @@ pub fn query_history(preset: KeymapPreset) -> &'static KeyBinding {
     match preset {
         KeymapPreset::Default => &global::QUERY_HISTORY,
         KeymapPreset::Ide => &global::QUERY_HISTORY_IDE,
+    }
+}
+
+pub fn sqlite_diagnostics(preset: KeymapPreset) -> &'static KeyBinding {
+    match preset {
+        KeymapPreset::Default => &global::SQLITE_DIAGNOSTICS,
+        KeymapPreset::Ide => &global::SQLITE_DIAGNOSTICS_IDE,
     }
 }
 
@@ -520,6 +550,15 @@ pub mod result_active {
         combos: &[KeyCombo::plain(Key::Enter)],
     };
 
+    pub const DETAIL: KeyBinding = KeyBinding {
+        key_short: "Enter",
+        key: "Enter",
+        desc_short: "Detail",
+        description: "Open active cell detail",
+        action: Action::ResultOpenCellDetail,
+        combos: &[KeyCombo::plain(Key::Enter)],
+    };
+
     pub const YANK: KeyBinding = KeyBinding {
         key_short: "Y",
         key: "Y",
@@ -545,6 +584,15 @@ pub mod result_active {
         description: "Unstage the last staged row deletion",
         action: Action::UnstageLastStagedRow,
         combos: &[KeyCombo::plain(Key::Char('u'))],
+    };
+
+    pub const CLEAR_STAGED_DELETE: KeyBinding = KeyBinding {
+        key_short: "Esc",
+        key: "Esc",
+        desc_short: "Clear Del",
+        description: "Clear all staged row deletions",
+        action: Action::ClearStagedDeletes,
+        combos: &[], // Esc is resolved by the Vim result-scroll transition
     };
 
     pub const CELL_NAV: KeyBinding = KeyBinding {
@@ -621,11 +669,12 @@ pub mod result_active {
 }
 
 pub const RESULT_ACTIVE_KEYS: &[KeyBinding] = &[
-    result_active::ENTER_DEEPEN,
+    result_active::DETAIL,
     result_active::YANK,
     result_active::ROW_DETAIL,
     result_active::STAGE_DELETE,
     result_active::UNSTAGE_DELETE,
+    result_active::CLEAR_STAGED_DELETE,
     result_active::CELL_NAV,
     result_active::ROW_NAV,
     result_active::TOP_BOTTOM,
