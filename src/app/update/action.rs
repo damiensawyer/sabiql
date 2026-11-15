@@ -425,6 +425,7 @@ pub enum Action {
     SettingsStartCustomBrowserEdit,
     SettingsStopCustomBrowserEdit,
     SettingsToggleWrappedCellScroll,
+    SettingsToggleWrappedCellFormatJson,
     SettingsApply,
     SettingsCancel,
     SettingsSaved(AppSettings),

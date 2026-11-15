@@ -449,6 +449,11 @@ pub struct ColumnWidthsCache {
     pub ideal_widths: Vec<u16>,
     pub header_min_widths: Vec<u16>,
     pub wrapped_ideal_widths: Option<Vec<u16>>,
+    /// Per-column JSON (object/array) detection. Independent of the "Format
+    /// JSON" toggle, so it is computed once per result and reused.
+    pub json_columns: Option<Vec<bool>>,
+    /// Wrapped ideal widths measured with JSON columns pretty-printed.
+    pub formatted_wrapped_ideal_widths: Option<Vec<u16>>,
     generation: u64,
 }
 
@@ -458,6 +463,8 @@ impl ColumnWidthsCache {
             ideal_widths,
             header_min_widths,
             wrapped_ideal_widths: None,
+            json_columns: None,
+            formatted_wrapped_ideal_widths: None,
             generation,
         }
     }

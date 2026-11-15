@@ -1,3 +1,5 @@
+use crate::app::model::shared::json_format::wrap_hang;
+
 pub const MIN_COL_WIDTH: u16 = 4;
 pub const PADDING: u16 = 2;
 
@@ -65,6 +67,9 @@ pub fn wrapped_line_count(text: &str, width: u16) -> u16 {
 }
 
 /// Wrap `text` at display-cell boundaries, preserving explicit newlines.
+///
+/// Lines that look like a JSON key-value pair (`    "key": value`) get a
+/// hanging indent so continuation lines align under the value.
 #[must_use]
 pub fn wrap_text_lines(text: &str, width: u16) -> Vec<String> {
     use unicode_width::UnicodeWidthChar;
@@ -76,6 +81,7 @@ pub fn wrap_text_lines(text: &str, width: u16) -> Vec<String> {
 
     let mut out = Vec::new();
     for line in text.split('\n') {
+        let hang = wrap_hang(line, width);
         let mut current = String::new();
         let mut used = 0usize;
 
@@ -83,7 +89,8 @@ pub fn wrap_text_lines(text: &str, width: u16) -> Vec<String> {
             let w = UnicodeWidthChar::width(ch).unwrap_or(0);
             if used + w > width && !current.is_empty() {
                 out.push(std::mem::take(&mut current));
-                used = 0;
+                current.push_str(&" ".repeat(hang));
+                used = hang;
             }
             current.push(ch);
             used += w;
@@ -267,6 +274,42 @@ mod tests {
 
             // each CJK char is 2 cells: "あい" (4) | "う" (2)
             assert_eq!(lines, vec!["あい".to_string(), "う".to_string()]);
+        }
+
+        #[test]
+        fn json_key_value_continuation_hangs_under_value() {
+            // `    "key": abcdefgh` with width=16.
+            // Compact form is 18 chars; first 16 fit, then continuation should
+            // hang under the value (position 11: 4 spaces + `"key": `).
+            let line = "    \"key\": abcdefgh";
+            let lines = wrap_text_lines(line, 16);
+            // First line: `    "key": abcde` (16 chars)
+            // Continuation: 11 spaces + `fgh`
+            assert_eq!(lines[0], "    \"key\": abcde");
+            assert_eq!(lines[1], "           fgh");
+        }
+
+        #[test]
+        fn plain_text_no_hang() {
+            // A line without the JSON key pattern wraps without hanging indent.
+            let lines = wrap_text_lines("abcde fghij", 5);
+            assert_eq!(
+                lines,
+                vec!["abcde".to_string(), " fghi".to_string(), "j".to_string()]
+            );
+        }
+
+        #[rstest]
+        #[case(r#"    "key": long"#, 14)]
+        #[case(r#"        "nested": long"#, 20)]
+        fn json_hang_lines_within_width(#[case] text: &str, #[case] width: u16) {
+            let lines = wrap_text_lines(text, width);
+            for line in &lines {
+                assert!(
+                    UnicodeWidthStr::width(line.as_str()) <= width as usize,
+                    "line {line:?} exceeds width {width}"
+                );
+            }
         }
     }
 }

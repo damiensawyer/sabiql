@@ -107,6 +107,7 @@ fn app_settings(config: ConnectionConfigFile) -> AppSettings {
             allow_horizontal_scroll: wrapped_cell_allow_horizontal_scroll.unwrap_or(false),
             max_lines_per_row: wrapped_cell_max_lines_per_row
                 .map_or(Some(DEFAULT_MAX_LINES_PER_ROW), |n| (n > 0).then_some(n)),
+            format_json: config.wrapped_cell_format_json.unwrap_or(false),
         },
     }
 }
@@ -119,6 +120,7 @@ fn set_app_settings(config: &mut ConnectionConfigFile, settings: AppSettings) {
         Some(settings.wrapped_cell.allow_horizontal_scroll);
     config.wrapped_cell_max_lines_per_row =
         Some(settings.wrapped_cell.max_lines_per_row.unwrap_or(0));
+    config.wrapped_cell_format_json = Some(settings.wrapped_cell.format_json);
 }
 
 #[cfg(test)]
@@ -148,6 +150,7 @@ mod tests {
         let wrapped = WrappedCellSettings {
             allow_horizontal_scroll: true,
             max_lines_per_row: Some(10),
+            format_json: false,
         };
         store
             .save(AppSettings {
@@ -178,6 +181,7 @@ mod tests {
                 wrapped_cell: WrappedCellSettings {
                     allow_horizontal_scroll: false,
                     max_lines_per_row: None,
+                    format_json: false,
                 },
             })
             .unwrap();
@@ -220,6 +224,7 @@ mod tests {
             WrappedCellSettings {
                 allow_horizontal_scroll: true,
                 max_lines_per_row: Some(5),
+                format_json: false,
             }
         );
     }
@@ -241,6 +246,7 @@ mod tests {
             WrappedCellSettings {
                 allow_horizontal_scroll: false,
                 max_lines_per_row: Some(10),
+                format_json: false,
             }
         );
     }
@@ -274,6 +280,7 @@ ssl_mode = "prefer"
                 wrapped_cell: WrappedCellSettings {
                     allow_horizontal_scroll: true,
                     max_lines_per_row: Some(5),
+                    format_json: false,
                 },
             })
             .unwrap();
@@ -360,6 +367,7 @@ ssl_mode = "prefer"
             wrapped_cell: WrappedCellSettings {
                 allow_horizontal_scroll: true,
                 max_lines_per_row: Some(5),
+                format_json: false,
             },
         });
 

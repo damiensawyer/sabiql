@@ -52,6 +52,7 @@ mod tests {
         let wrapped_cell = WrappedCellSettings {
             allow_horizontal_scroll: true,
             max_lines_per_row: Some(10),
+            format_json: false,
         };
         let action = run(
             AppSettings {

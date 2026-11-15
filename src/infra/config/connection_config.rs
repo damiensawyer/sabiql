@@ -37,6 +37,8 @@ pub(crate) struct ConnectionConfigFile {
     pub wrapped_cell_allow_horizontal_scroll: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrapped_cell_max_lines_per_row: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrapped_cell_format_json: Option<bool>,
     #[serde(default, skip_serializing)]
     pub low_scroll_allow_horizontal_scroll: Option<bool>,
     #[serde(default, skip_serializing)]
@@ -103,6 +105,7 @@ impl Default for ConnectionConfigFile {
             er_browser: None,
             wrapped_cell_allow_horizontal_scroll: None,
             wrapped_cell_max_lines_per_row: None,
+            wrapped_cell_format_json: None,
             low_scroll_allow_horizontal_scroll: None,
             low_scroll_max_lines_per_row: None,
             connections: Vec::new(),

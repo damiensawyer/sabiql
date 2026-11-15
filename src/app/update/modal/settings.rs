@@ -46,6 +46,10 @@ pub(super) fn reduce_settings(
             state.settings.toggle_wrapped_cell_horizontal();
             save_selected_settings(state)
         }
+        Action::SettingsToggleWrappedCellFormatJson => {
+            state.settings.toggle_wrapped_cell_format_json();
+            save_selected_settings(state)
+        }
         Action::TextInput {
             target: InputTarget::SettingsErBrowser,
             ch,

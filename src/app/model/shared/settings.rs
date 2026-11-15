@@ -242,6 +242,10 @@ impl SettingsState {
             !self.selected_wrapped_cell.allow_horizontal_scroll;
     }
 
+    pub fn toggle_wrapped_cell_format_json(&mut self) {
+        self.selected_wrapped_cell.format_json = !self.selected_wrapped_cell.format_json;
+    }
+
     pub fn cycle_wrapped_cell_max_lines_next(&mut self) {
         self.selected_wrapped_cell.max_lines_per_row =
             next_max_lines(self.selected_wrapped_cell.max_lines_per_row);
