@@ -21,16 +21,16 @@ test_project ▸ test_db ▸ -                                                  
 │                        │  :                                            Open command line                                                ││                        │
 │                        │  Esc                                          Exit to Cell Active (draft preserved)                            ││                        │
 │                        │  Enter                                        Execute the confirmed statement                                  ││                        │
-│                        │  Esc                                          Cancel and return to editor                                      ││                        │
-│                        │  Esc                                          Return to Normal mode                                            ││                        │
+│                        │  Esc                                          Cancel and return to editor                                      ┃│                        │
+│                        │  Esc                                          Return to Normal mode                                            ┃│                        │
 │                        │  ↑↓←→                                         Move cursor                                                      ┃│                        │
 │                        │  Home / End                                   Line start/end                                                   ┃│                        │
 │                        │                                                                                                                ┃│                        │
-│                        │▸ Search / Filter                                                                                               ┃│                        │
-│                        │  type                                         Type to filter                                                   ┃│────────────────────────┘
+│                        │▸ Search / Filter                                                                                               ┃│────────────────────────┘
 │                        │  type                                         Type to filter                                                   ┃│────────────────────────┐
 │                        │  type                                         Type to filter                                                   ┃│                        │
-│                        │  type                                         Type to search                                                   ┃│                        │
+│                        │  type                                         Type to filter                                                   ││                        │
+│                        │  type                                         Type to search                                                   ││                        │
 │                        │  Enter                                        Confirm search                                                   ││                        │
 │                        │  Esc                                          Cancel search                                                    ││                        │
 │                        │  Ctrl+N / Ctrl+P / j / k / ↑ / ↓              Scroll down / up                                                 ││                        │
@@ -44,8 +44,7 @@ test_project ▸ test_db ▸ -                                                  
 │                        │                                                                                                                ││                        │
 │                        │▸ Connections                                                                                                   ││                        │
 │                        │  Tab/⇧Tab                                     Next/Previous field                                              ││                        │
-│                        │  Tab                                          Next field                                                       ││                        │
-│                        │  ⇧Tab                                         Previous field                                                   ▼│                        │
+│                        │  Tab                                          Next field                                                       ▼│                        │
 │                        │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────│                        │
 │                        │ [BROWSE]                                                                                                        │                        │
 │                        ╰ /: Filter │ Esc: Close │ ?: Close ──────────────────────────────────────────────────────────────────────────────╯                        │
