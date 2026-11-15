@@ -466,6 +466,7 @@ impl UiState {
             WrappedCellSettings {
                 allow_horizontal_scroll: true,
                 max_lines_per_row: self.wrapped_cell.max_lines_per_row,
+                format_json: self.wrapped_cell.format_json,
             }
         }
     }

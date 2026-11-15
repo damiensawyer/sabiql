@@ -456,6 +456,7 @@ mod tests {
                 let wrapped_cell = WrappedCellSettings {
                     allow_horizontal_scroll: true,
                     max_lines_per_row: Some(8),
+                    format_json: false,
                 };
                 let effects = super::dispatch_modal(
                     &mut state,

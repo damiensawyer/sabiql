@@ -12,15 +12,21 @@ use std::hash::{Hash, Hasher};
 
 use unicode_width::UnicodeWidthStr;
 
+use super::json_format::wrap_hang;
+
 fn wrapped_line_count(text: &str, width: u16) -> u16 {
     if width == 0 || text.is_empty() {
         return 0;
     }
 
+    let width = usize::from(width);
     text.split('\n').fold(0u16, |acc, line| {
-        let w = UnicodeWidthStr::width(line).min(u16::MAX as usize) as u16;
-        let wrapped = w.max(1).div_ceil(width);
-        acc.saturating_add(wrapped)
+        let w = UnicodeWidthStr::width(line);
+        // Continuation lines start with the hanging indent, so they hold
+        // fewer content cells; this must match `wrap_text_lines` in the UI.
+        let continuation_width = width - wrap_hang(line, width);
+        let wrapped = 1 + w.saturating_sub(width).div_ceil(continuation_width);
+        acc.saturating_add(wrapped.min(u16::MAX as usize) as u16)
     })
 }
 
@@ -31,6 +37,9 @@ pub const DEFAULT_MAX_LINES_PER_ROW: u16 = 5;
 pub struct WrappedCellSettings {
     pub allow_horizontal_scroll: bool,
     pub max_lines_per_row: Option<u16>,
+    /// When `true`, columns detected as JSON (object/array values) are
+    /// pretty-printed on display, like PostgreSQL's `jsonb_pretty`.
+    pub format_json: bool,
 }
 
 impl Default for WrappedCellSettings {
@@ -38,6 +47,7 @@ impl Default for WrappedCellSettings {
         Self {
             allow_horizontal_scroll: false,
             max_lines_per_row: Some(DEFAULT_MAX_LINES_PER_ROW),
+            format_json: false,
         }
     }
 }
@@ -87,6 +97,7 @@ pub struct WrappedCellLayoutKey {
     pub inner_width: u16,
     pub allow_horizontal_scroll: bool,
     pub max_lines_per_row: Option<u16>,
+    pub format_json: bool,
     pub viewport_fingerprint: u64,
 }
 
@@ -588,6 +599,7 @@ mod tests {
             WrappedCellSettings {
                 allow_horizontal_scroll: allow_scroll,
                 max_lines_per_row: cap,
+                format_json: false,
             }
         }
 

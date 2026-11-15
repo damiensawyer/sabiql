@@ -187,6 +187,25 @@ impl SettingsOverlay {
 
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
+            "Format JSON",
+            Style::default().fg(theme.semantic.text.primary),
+        )));
+        lines.push(Line::raw(""));
+        let format_label = if wrapped_cell.format_json {
+            "on (pretty-print JSON columns)"
+        } else {
+            "off"
+        };
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                format!("[f] {format_label}"),
+                Style::default().fg(theme.semantic.text.primary),
+            ),
+        ]));
+
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
             "Max lines per row",
             Style::default().fg(theme.semantic.text.primary),
         )));

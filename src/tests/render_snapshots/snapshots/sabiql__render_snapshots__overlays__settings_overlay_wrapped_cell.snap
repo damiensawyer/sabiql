@@ -25,9 +25,13 @@ test_project ▸ test_db ▸ -                                                  
 │                                │                  │                                                                              │                                │
 │                                │                  │  [Space] off (columns shrink to fit)                                         │                                │
 │                                │                  │                                                                              │                                │
-│                                │                  │Max lines per row                                                             │                                │
+│                                │                  │Format JSON                                                                   │                                │
 │                                │                  │                                                                              │────────────────────────────────┘
-│                                │                  │  [j/k] 5 lines                                                               │────────────────────────────────┐
+│                                │                  │  [f] off                                                                     │────────────────────────────────┐
+│                                │                  │                                                                              │                                │
+│                                │                  │Max lines per row                                                             │                                │
+│                                │                  │                                                                              │                                │
+│                                │                  │  [j/k] 5 lines                                                               │                                │
 │                                │                  │                                                                              │                                │
 │                                │                  │Toggle Wrapped Cell Mode at any time with Alt+L.                              │                                │
 │                                │                  │                                                                              │                                │
@@ -35,11 +39,7 @@ test_project ▸ test_db ▸ -                                                  
 │                                │                  │                                                                              │                                │
 │                                │                  │                                                                              │                                │
 │                                │                  │                                                                              │                                │
-│                                │                  │                                                                              │                                │
-│                                │                  │                                                                              │                                │
-│                                │                  │                                                                              │                                │
-│                                │                  │                                                                              │                                │
-│                                ╰ Enter: Close │ Space: Toggle │ Tab/⇧Tab: Section │ Esc: Close ──────────────────────────────────╯                                │
+│                                ╰ Enter: Close │ Space: Toggle │ f: Format │ Tab/⇧Tab: Section │ Esc: Close ──────────────────────╯                                │
 │                                       ││                                                                                                                          │
 │                                       ││                                                                                                                          │
 │                                       ││                                                                                                                          │

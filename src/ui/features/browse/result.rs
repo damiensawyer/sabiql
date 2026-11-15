@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::time::Instant;
 
@@ -14,6 +15,7 @@ use crate::primitives::atoms::{panel_block_highlight, text_cursor_spans};
 use crate::app::model::app_state::AppState;
 use crate::app::model::shared::focused_pane::FocusedPane;
 use crate::app::model::shared::input_mode::InputMode;
+use crate::app::model::shared::json_format::{detect_json_columns, format_cell};
 use crate::app::model::shared::ui_state::{RESULT_INNER_OVERHEAD, ResultSelection, YankFlash};
 use crate::app::model::shared::viewport::{
     ColumnWidthConfig, ColumnWidthsCache, MAX_COL_WIDTH, SelectionContext, ViewportPlan,
@@ -266,19 +268,25 @@ impl ResultPane {
         // `ideal_widths` is based on first lines only (normal view truncates to
         // one line). Wrapped Cell wraps the full cell, so width must account for
         // the widest line — otherwise jsonb output starting with `{` gets squeezed.
+        let effective = effective_wrapped_cell;
+        let json_columns = if wrapped_cell_enabled && effective.format_json {
+            cached_json_columns(&mut widths_cache, result).to_vec()
+        } else {
+            Vec::new()
+        };
         let wrapped_cell_widths = if wrapped_cell_enabled {
-            cached_wrapped_cell_ideal_widths(&mut widths_cache, result)
+            cached_wrapped_cell_ideal_widths(&mut widths_cache, result, &json_columns)
         } else {
             ideal_widths
         };
 
-        let effective = effective_wrapped_cell;
         if wrapped_cell_enabled {
             let wrapped_cell_key = wrapped_cell_layout::WrappedCellLayoutKey {
                 result_generation,
                 inner_width: inner.width,
                 allow_horizontal_scroll: effective.allow_horizontal_scroll,
                 max_lines_per_row: effective.max_lines_per_row,
+                format_json: effective.format_json,
                 viewport_fingerprint: 0,
             };
             let use_scrollable = effective.allow_horizontal_scroll
@@ -292,6 +300,7 @@ impl ResultPane {
                     min_widths,
                     horizontal_offset,
                     effective,
+                    &json_columns,
                     scroll_offset,
                     selection,
                     editing_cell.as_ref(),
@@ -310,6 +319,7 @@ impl ResultPane {
                     result,
                     wrapped_cell_widths,
                     effective,
+                    &json_columns,
                     scroll_offset,
                     selection,
                     editing_cell.as_ref(),
@@ -527,6 +537,7 @@ impl ResultPane {
         result: &QueryResult,
         ideal_widths: &[u16],
         settings: WrappedCellSettings,
+        json_columns: &[bool],
         scroll_offset: usize,
         selection: &ResultSelection,
         editing_cell: Option<&EditingCellView<'_>>,
@@ -548,7 +559,7 @@ impl ResultPane {
             (0..result.data_row_count())
                 .map(|row_idx| {
                     wrapped_cell_layout::row_layout(
-                        &display_row(result, row_idx),
+                        &wrapped_display_row(result, row_idx, json_columns),
                         &column_widths,
                         PADDING,
                         settings.max_lines_per_row,
@@ -609,7 +620,7 @@ impl ResultPane {
                     is_active_row,
                     theme,
                 );
-                let row_data = display_row(result, abs_row_idx);
+                let row_data = wrapped_display_row(result, abs_row_idx, json_columns);
                 let cells: Vec<Cell> = column_widths
                     .iter()
                     .enumerate()
@@ -712,6 +723,7 @@ impl ResultPane {
         min_widths: &[u16],
         horizontal_offset: usize,
         settings: WrappedCellSettings,
+        json_columns: &[bool],
         scroll_offset: usize,
         selection: &ResultSelection,
         editing_cell: Option<&EditingCellView<'_>>,
@@ -757,8 +769,10 @@ impl ResultPane {
             measured_wrapped_cell_layout(stored_wrapped_cell, viewport_key, || {
                 (0..result.data_row_count())
                     .map(|row_idx| {
-                        let viewport_row =
-                            project_viewport_row(&display_row(result, row_idx), &viewport_indices);
+                        let viewport_row = project_viewport_row(
+                            &wrapped_display_row(result, row_idx, json_columns),
+                            &viewport_indices,
+                        );
                         wrapped_cell_layout::row_layout(
                             &viewport_row,
                             &viewport_widths,
@@ -825,7 +839,7 @@ impl ResultPane {
                     theme,
                 );
 
-                let row_data = display_row(result, abs_row_idx);
+                let row_data = wrapped_display_row(result, abs_row_idx, json_columns);
                 let cells: Vec<Cell> = viewport_indices
                     .iter()
                     .zip(viewport_widths.iter())
@@ -1178,18 +1192,61 @@ fn display_row(result: &QueryResult, row: usize) -> Vec<String> {
     result.display_row_at(row).unwrap_or_default()
 }
 
+/// Display text for a cell in Wrapped Cell Mode. `json_columns` is empty unless
+/// JSON formatting is on; flagged columns are pretty-printed on demand, so only
+/// rows that are measured or drawn pay for parsing.
+fn wrapped_display_value<'a>(
+    result: &'a QueryResult,
+    row: usize,
+    col: usize,
+    json_columns: &[bool],
+) -> Option<Cow<'a, str>> {
+    let value = result.display_value_ref_at(row, col)?;
+    let is_json_column = json_columns.get(col).copied().unwrap_or(false)
+        && !matches!(result.value_at(row, col), Some(QueryValue::Null));
+    Some(match format_cell(&value, is_json_column, true) {
+        Cow::Owned(formatted) => Cow::Owned(formatted),
+        Cow::Borrowed(_) => value,
+    })
+}
+
+fn wrapped_display_row(result: &QueryResult, row: usize, json_columns: &[bool]) -> Vec<String> {
+    if json_columns.is_empty() {
+        return display_row(result, row);
+    }
+    (0..result.column_count())
+        .map(|col| {
+            wrapped_display_value(result, row, col, json_columns)
+                .map(Cow::into_owned)
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+fn cached_json_columns<'a>(cache: &'a mut ColumnWidthsCache, result: &QueryResult) -> &'a [bool] {
+    cache.json_columns.get_or_insert_with(|| {
+        detect_json_columns(
+            result.data_row_count(),
+            result.column_count(),
+            |row, col| match result.value_at(row, col) {
+                None | Some(QueryValue::Null) => None,
+                Some(_) => result.display_value_ref_at(row, col),
+            },
+        )
+    })
+}
+
 /// Like `calculate_result_ideal_widths`, but sizes each column by the widest
 /// *line* across the whole cell rather than just the first line. Wrapped Cell
 /// Mode wraps and displays every line, so its width budgeting needs to reflect
 /// the full multi-line content (e.g. `jsonb_pretty()` output, which often
 /// starts with a lone `{` far shorter than the lines that follow).
-fn calculate_wrapped_cell_ideal_widths(result: &QueryResult) -> Vec<u16> {
+fn calculate_wrapped_cell_ideal_widths(result: &QueryResult, json_columns: &[bool]) -> Vec<u16> {
     calculate_ideal_widths_with(
         &result.columns,
         result.data_row_count(),
         |row_idx, col_idx| {
-            result
-                .display_value_ref_at(row_idx, col_idx)
+            wrapped_display_value(result, row_idx, col_idx, json_columns)
                 .map(|cell| cell.lines().map(UnicodeWidthStr::width).max().unwrap_or(0))
         },
     )
@@ -1222,14 +1279,14 @@ fn measured_wrapped_cell_layout(
 fn cached_wrapped_cell_ideal_widths<'a>(
     cache: &'a mut ColumnWidthsCache,
     result: &QueryResult,
+    json_columns: &[bool],
 ) -> &'a [u16] {
-    if cache.wrapped_ideal_widths.is_none() {
-        cache.wrapped_ideal_widths = Some(calculate_wrapped_cell_ideal_widths(result));
-    }
-    cache
-        .wrapped_ideal_widths
-        .as_deref()
-        .expect("wrapped ideal widths are initialized above")
+    let slot = if json_columns.is_empty() {
+        &mut cache.wrapped_ideal_widths
+    } else {
+        &mut cache.formatted_wrapped_ideal_widths
+    };
+    slot.get_or_insert_with(|| calculate_wrapped_cell_ideal_widths(result, json_columns))
 }
 
 fn project_viewport_row(row: &[String], indices: &[usize]) -> Vec<String> {
@@ -1537,6 +1594,76 @@ mod tests {
         }
     }
 
+    mod wrapped_json_formatting {
+        use super::*;
+
+        fn json_result() -> QueryResult {
+            QueryResult::success_with_values(
+                "SELECT doc".to_string(),
+                vec!["doc".to_string()],
+                vec![
+                    vec![QueryValue::text(r#"{"name":"a","tags":[1,2]}"#)],
+                    vec![QueryValue::Null],
+                ],
+                0,
+                QuerySource::Adhoc,
+            )
+        }
+
+        #[test]
+        fn json_column_detection_skips_null_cells() {
+            let mut cache = ColumnWidthsCache::new(vec![7], vec![7], 1);
+
+            assert_eq!(cached_json_columns(&mut cache, &json_result()), &[true]);
+        }
+
+        #[test]
+        fn flagged_json_cell_is_pretty_printed() {
+            let result = json_result();
+
+            let value = wrapped_display_value(&result, 0, 0, &[true]).unwrap();
+
+            assert!(value.starts_with("{\n    \"name\": \"a\""));
+        }
+
+        #[test]
+        fn null_cell_in_json_column_is_left_as_is() {
+            let result = json_result();
+
+            let value = wrapped_display_value(&result, 1, 0, &[true]).unwrap();
+
+            assert_eq!(value, result.display_value_ref_at(1, 0).unwrap());
+        }
+
+        #[test]
+        fn formatting_off_keeps_raw_text() {
+            let result = json_result();
+
+            assert_eq!(
+                wrapped_display_row(&result, 0, &[]),
+                vec![r#"{"name":"a","tags":[1,2]}"#.to_string()]
+            );
+        }
+
+        #[rstest]
+        #[case(r#"    "description": "a long value that wraps several times""#, 20)]
+        #[case("plain text that is long enough to wrap", 10)]
+        #[case(r#"        "k": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv""#, 16)]
+        fn measured_line_count_matches_hanging_indent_wrap(
+            #[case] text: &str,
+            #[case] col_width: u16,
+        ) {
+            let wrap_width = WrappedCellSettings::effective_wrap_width(col_width, PADDING);
+
+            assert_eq!(
+                usize::from(WrappedCellSettings::wrapped_cell_lines(
+                    text, col_width, PADDING
+                )),
+                wrap_text_lines(text, wrap_width).len()
+            );
+        }
+    }
+
     mod calculate_wrapped_cell_ideal_widths_tests {
         use super::*;
 
@@ -1560,7 +1687,7 @@ mod tests {
             );
 
             let ideal = calculate_result_ideal_widths(&result);
-            let wrapped_cell = calculate_wrapped_cell_ideal_widths(&result);
+            let wrapped_cell = calculate_wrapped_cell_ideal_widths(&result, &[]);
 
             assert!(wrapped_cell[0] > ideal[0]);
             assert_eq!(wrapped_cell[0], 38);
@@ -1572,8 +1699,8 @@ mod tests {
             let changed = text_result(&["value"], &[&["a much longer value"]]);
             let mut cache = ColumnWidthsCache::new(vec![7], vec![7], 1);
 
-            let first = cached_wrapped_cell_ideal_widths(&mut cache, &result).to_vec();
-            let reused = cached_wrapped_cell_ideal_widths(&mut cache, &changed);
+            let first = cached_wrapped_cell_ideal_widths(&mut cache, &result, &[]).to_vec();
+            let reused = cached_wrapped_cell_ideal_widths(&mut cache, &changed, &[]);
 
             assert_eq!(reused, first.as_slice());
         }
