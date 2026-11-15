@@ -15,6 +15,10 @@ use crate::policy::write::write_guardrails::{WriteOperation, WritePreview};
 pub struct ResultInteraction {
     scroll_offset: usize,
     horizontal_offset: usize,
+    /// Vertical scroll offset into the currently active cell's wrapped lines
+    /// (Wrapped Cell Mode only). Clamped/corrected each frame in
+    /// `AppState::apply_render_output`, mirroring `result_viewport_plan`.
+    pub cell_vertical_offset: usize,
     yank_flash: Option<YankFlash>,
 
     delete_op_pending: bool,
@@ -30,6 +34,7 @@ impl ResultInteraction {
         self.selection.reset();
         self.cell_edit.clear();
         self.pending_write_preview = None;
+        self.cell_vertical_offset = 0;
     }
 
     pub fn selection(&self) -> &ResultSelection {
@@ -74,14 +79,17 @@ impl ResultInteraction {
 
     pub fn activate_cell(&mut self, row: usize, col: usize) {
         self.selection.enter_cell(row, col);
+        self.cell_vertical_offset = 0;
     }
 
     pub fn move_row(&mut self, row: usize) {
         self.selection.move_row(row);
+        self.cell_vertical_offset = 0;
     }
 
     pub fn move_cell(&mut self, col: usize) {
         self.selection.move_cell(col);
+        self.cell_vertical_offset = 0;
     }
 
     pub fn clamp_selection(&mut self, max_rows: usize, max_cols: usize) {
@@ -482,6 +490,51 @@ mod tests {
             assert!(ri.is_delete_operator_pending());
             assert!(!ri.is_yank_operator_pending());
         }
+    }
+
+    #[test]
+    fn activate_cell_resets_vertical_offset() {
+        let mut ri = ResultInteraction {
+            cell_vertical_offset: 4,
+            ..Default::default()
+        };
+
+        ri.activate_cell(1, 1);
+
+        assert_eq!(ri.cell_vertical_offset, 0);
+    }
+
+    #[test]
+    fn move_row_resets_vertical_offset() {
+        let mut ri = ResultInteraction::default();
+        ri.activate_cell(1, 1);
+        ri.cell_vertical_offset = 4;
+
+        ri.move_row(2);
+
+        assert_eq!(ri.cell_vertical_offset, 0);
+    }
+
+    #[test]
+    fn move_cell_resets_vertical_offset() {
+        let mut ri = ResultInteraction::default();
+        ri.activate_cell(1, 1);
+        ri.cell_vertical_offset = 4;
+
+        ri.move_cell(2);
+
+        assert_eq!(ri.cell_vertical_offset, 0);
+    }
+
+    #[test]
+    fn exit_cell_to_scroll_resets_vertical_offset() {
+        let mut ri = ResultInteraction::default();
+        ri.activate_cell(1, 1);
+        ri.cell_vertical_offset = 4;
+
+        ri.exit_cell_to_scroll();
+
+        assert_eq!(ri.cell_vertical_offset, 0);
     }
 
     #[test]

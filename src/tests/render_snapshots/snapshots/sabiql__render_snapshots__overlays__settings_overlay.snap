@@ -19,8 +19,8 @@ test_project ▸ test_db ▸ -                                                  
 │                                │                  │                                                                              │                                │
 │                                │  > Appearance    │Theme                                                                         │                                │
 │                                │    Keymap        │                                                                              │                                │
-│                                │    ER Diagram    │  > Sabiql Dark    saved                                                      │                                │
-│                                │                  │    Light                                                                     │                                │
+│                                │    Wrapped Cell  │  > Sabiql Dark                                                               │                                │
+│                                │    ER Diagram    │    Light                                                                     │                                │
 │                                │                  │                                                                              │                                │
 │                                │                  │                                                                              │                                │
 │                                │                  │                                                                              │                                │
@@ -39,7 +39,7 @@ test_project ▸ test_db ▸ -                                                  
 │                                │                  │╰────────────────────────────╯                                                │                                │
 │                                │                  │Choose a theme that fits your terminal.                                       │                                │
 │                                │                  │                                                                              │                                │
-│                                ╰ Enter: Apply │ Tab/⇧Tab: Section │ Esc: Cancel ─────────────────────────────────────────────────╯                                │
+│                                ╰ Enter: Close │ Tab/⇧Tab: Section │ Esc: Close ──────────────────────────────────────────────────╯                                │
 │                                       ││                                                                                                                          │
 │                                       ││                                                                                                                          │
 │                                       ││                                                                                                                          │

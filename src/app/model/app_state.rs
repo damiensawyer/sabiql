@@ -175,6 +175,7 @@ impl AppState {
         self.ui
             .set_result_viewport_plan(layout.result.viewport_plan);
         self.ui.set_result_widths_cache(layout.result.widths_cache);
+        self.result_interaction.cell_vertical_offset = layout.result.cell_vertical_offset;
         self.ui
             .set_explorer_pane_height(layout.explorer.pane_height);
         self.ui
@@ -189,6 +190,7 @@ impl AppState {
         self.ui
             .set_inspector_pane_height(layout.inspector.pane_height);
         self.ui.set_result_pane_height(layout.result.pane_height);
+        self.ui.result_wrapped_cell_layout = layout.result.wrapped_cell_layout;
     }
 
     fn apply_input_layout(&mut self, layout: InputLayout) {

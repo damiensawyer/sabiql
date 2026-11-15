@@ -38,6 +38,10 @@ pub(in crate::update) fn reduce_focus(state: &mut AppState, action: &Action) -> 
             }
             DispatchResult::handled()
         }
+        Action::ToggleWrappedCell => {
+            state.ui.toggle_wrapped_cell();
+            DispatchResult::handled()
+        }
         Action::InspectorNextTab => {
             state.ui.set_inspector_tab(
                 state

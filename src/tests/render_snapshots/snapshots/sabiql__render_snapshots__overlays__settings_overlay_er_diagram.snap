@@ -19,9 +19,9 @@ test_project ▸ test_db ▸ -                                                  
 │                                │                  │                                                                              │                                │
 │                                │    Appearance    │ER Diagram                                                                    │                                │
 │                                │    Keymap        │                                                                              │                                │
-│                                │  > ER Diagram    │Browser                                                                       │                                │
-│                                │                  │                                                                              │                                │
-│                                │                  │  > System default     saved                                                  │                                │
+│                                │    Wrapped Cell  │Browser                                                                       │                                │
+│                                │  > ER Diagram    │                                                                              │                                │
+│                                │                  │  > System default                                                            │                                │
 │                                │                  │    Google Chrome                                                             │                                │
 │                                │                  │    Firefox                                                                   │                                │
 │                                │                  │    Safari                                                                    │                                │
@@ -39,7 +39,7 @@ test_project ▸ test_db ▸ -                                                  
 │                                │                  │                                                                              │                                │
 │                                │                  │                                                                              │                                │
 │                                │                  │                                                                              │                                │
-│                                ╰ Enter: Apply │ Tab/⇧Tab: Section │ Esc: Cancel ─────────────────────────────────────────────────╯                                │
+│                                ╰ Enter: Close │ Tab/⇧Tab: Section │ Esc: Close ──────────────────────────────────────────────────╯                                │
 │                                       ││                                                                                                                          │
 │                                       ││                                                                                                                          │
 │                                       ││                                                                                                                          │

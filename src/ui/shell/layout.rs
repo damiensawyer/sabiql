@@ -189,15 +189,16 @@ impl MainLayout {
         theme: &ThemePalette,
     ) -> BrowseLayout {
         if state.ui.is_focus_mode() {
-            let (result_plan, result_widths_cache) =
-                ResultPane::render(frame, main_area, state, now, theme);
+            let result_geometry = ResultPane::render(frame, main_area, state, now, theme);
             BrowseLayout {
                 explorer: ExplorerLayout::default(),
                 inspector: InspectorLayout::default(),
                 result: ResultLayout {
-                    viewport_plan: result_plan,
-                    widths_cache: result_widths_cache,
+                    viewport_plan: result_geometry.plan,
+                    widths_cache: result_geometry.widths_cache,
                     pane_height: main_area.height,
+                    cell_vertical_offset: result_geometry.cell_vertical_offset,
+                    wrapped_cell_layout: result_geometry.wrapped_cell_layout,
                 },
             }
         } else {
@@ -213,8 +214,7 @@ impl MainLayout {
 
             let inspector_plan =
                 Inspector::render(frame, inspector_area, state, services, now, theme);
-            let (result_plan, result_widths_cache) =
-                ResultPane::render(frame, result_area, state, now, theme);
+            let result_geometry = ResultPane::render(frame, result_area, state, now, theme);
 
             BrowseLayout {
                 explorer: ExplorerLayout {
@@ -226,9 +226,11 @@ impl MainLayout {
                     pane_height: inspector_area.height,
                 },
                 result: ResultLayout {
-                    viewport_plan: result_plan,
-                    widths_cache: result_widths_cache,
+                    viewport_plan: result_geometry.plan,
+                    widths_cache: result_geometry.widths_cache,
                     pane_height: result_area.height,
+                    cell_vertical_offset: result_geometry.cell_vertical_offset,
+                    wrapped_cell_layout: result_geometry.wrapped_cell_layout,
                 },
             }
         }

@@ -19,6 +19,7 @@ mod tests {
     use super::*;
     use crate::model::shared::settings::KeymapPreset;
     use crate::model::shared::theme_id::ThemeId;
+    use crate::model::shared::wrapped_cell::WrappedCellSettings;
     use crate::ports::outbound::SettingsStoreError;
 
     struct RecordingSettingsStore {
@@ -48,11 +49,16 @@ mod tests {
             saved: Mutex::new(Vec::new()),
         });
 
+        let wrapped_cell = WrappedCellSettings {
+            allow_horizontal_scroll: true,
+            max_lines_per_row: Some(10),
+        };
         let action = run(
             AppSettings {
                 theme_id: ThemeId::Light,
                 keymap_preset: KeymapPreset::Ide,
                 er_browser: Some("Firefox".to_string()),
+                wrapped_cell,
             },
             &(store.clone() as Arc<dyn SettingsStore>),
         );
@@ -66,12 +72,14 @@ mod tests {
             store.saved.lock().unwrap()[0].keymap_preset,
             KeymapPreset::Ide
         );
+        assert_eq!(store.saved.lock().unwrap()[0].wrapped_cell, wrapped_cell);
         assert!(matches!(
             action,
             Action::SettingsSaved(settings)
                 if settings.theme_id == ThemeId::Light
                     && settings.keymap_preset == KeymapPreset::Ide
                     && settings.er_browser.as_deref() == Some("Firefox")
+                    && settings.wrapped_cell == wrapped_cell
         ));
     }
 
@@ -84,6 +92,7 @@ mod tests {
                 theme_id: ThemeId::Light,
                 keymap_preset: KeymapPreset::default(),
                 er_browser: None,
+                wrapped_cell: WrappedCellSettings::default(),
             },
             &(store as Arc<dyn SettingsStore>),
         );

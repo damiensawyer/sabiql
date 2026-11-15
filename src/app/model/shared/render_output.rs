@@ -1,4 +1,5 @@
 use crate::model::shared::viewport::{ColumnWidthsCache, ViewportPlan};
+use crate::model::shared::wrapped_cell::MeasuredWrappedCellLayout;
 
 #[derive(Clone, Copy)]
 pub struct CellDetailViewport {
@@ -41,6 +42,16 @@ pub struct ResultLayout {
     pub viewport_plan: ViewportPlan,
     pub widths_cache: ColumnWidthsCache,
     pub pane_height: u16,
+    /// Corrected/clamped `ResultInteraction::cell_vertical_offset`, computed
+    /// against the active cell's actual wrapped-line count during this draw.
+    /// Mirrors how `viewport_plan` self-corrects `horizontal_offset`.
+    pub cell_vertical_offset: usize,
+    /// Wrapped Cell Mode layout measured during this draw, or `None` when the
+    /// mode is off. Carries the per-row line heights so the scroll reducer
+    /// can do line-based visibility math instead of the row-count math used
+    /// by the normal table. Like `viewport_plan`, it reflects the previous
+    /// frame.
+    pub wrapped_cell_layout: Option<MeasuredWrappedCellLayout>,
 }
 
 #[derive(Default)]

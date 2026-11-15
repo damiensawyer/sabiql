@@ -450,6 +450,7 @@ fn reference_sections(
                 command_palette(keymap_preset),
                 &global::COMMAND_LINE,
                 &global::FOCUS,
+                &global::WRAPPED_CELL,
                 read_only(keymap_preset),
             ]),
         ),

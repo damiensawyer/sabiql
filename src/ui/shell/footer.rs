@@ -597,6 +597,7 @@ mod tests {
         state.modal.set_mode(InputMode::Settings);
         state.settings.switch_next_section();
         state.settings.switch_next_section();
+        state.settings.switch_next_section();
         state.settings.start_custom_browser_edit();
         state.settings.stop_custom_browser_edit();
 
@@ -610,6 +611,7 @@ mod tests {
     fn settings_custom_browser_edit_footer_hides_modal_hints() {
         let mut state = AppState::new("test".to_string());
         state.modal.set_mode(InputMode::Settings);
+        state.settings.switch_next_section();
         state.settings.switch_next_section();
         state.settings.switch_next_section();
         state.settings.start_custom_browser_edit();

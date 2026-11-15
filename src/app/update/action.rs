@@ -54,6 +54,7 @@ pub enum ScrollTarget {
     CellDetail,
     SqliteDiagnostics,
     RowDetail,
+    Cell,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -423,6 +424,7 @@ pub enum Action {
     SettingsPreviousSection,
     SettingsStartCustomBrowserEdit,
     SettingsStopCustomBrowserEdit,
+    SettingsToggleWrappedCellScroll,
     SettingsApply,
     SettingsCancel,
     SettingsSaved(AppSettings),
@@ -590,6 +592,7 @@ pub enum Action {
     OpenFolderFailed(Arc<std::io::Error>),
     ToggleFocus,
     ToggleReadOnly,
+    ToggleWrappedCell,
 
     // Query history
     QueryHistoryLoaded(QueryHistoryScope, Vec<QueryHistoryEntry>),
