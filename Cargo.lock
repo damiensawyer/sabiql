@@ -2793,6 +2793,7 @@ version = "3.0.3"
 dependencies = [
  "async-trait",
  "color-eyre",
+ "crossterm",
  "csv",
  "lru",
  "mockall",

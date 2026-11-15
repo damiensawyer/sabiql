@@ -109,6 +109,17 @@ pub mod sql_modal_normal {
         action: Action::OpenModal(ModalKind::QueryHistoryPicker),
         combos: &[KeyCombo::plain(Key::Char('O'))],
     };
+
+    pub const EXTERNAL_EDITOR: KeyBinding = KeyBinding {
+        key_short: "^X",
+        key: "Ctrl+X",
+        desc_short: "External Edit",
+        description: "Open external editor",
+        action: Action::ExternalEditorOpen {
+            file: std::path::PathBuf::new(),
+        },
+        combos: &[KeyCombo::ctrl(Key::Char('x'))],
+    };
 }
 
 pub const SQL_MODAL_NORMAL_KEYS: &[KeyBinding] = &[
@@ -122,6 +133,7 @@ pub const SQL_MODAL_NORMAL_KEYS: &[KeyBinding] = &[
     sql_modal_normal::CLOSE,
     sql_modal_normal::CLEAR,
     sql_modal_normal::QUERY_HISTORY,
+    sql_modal_normal::EXTERNAL_EDITOR,
 ];
 
 // =============================================================================
@@ -386,6 +398,17 @@ pub mod sql_modal {
         action: Action::OpenModal(ModalKind::QueryHistoryPicker),
         combos: &[KeyCombo::ctrl(Key::Char('o'))],
     };
+
+    pub const EXTERNAL_EDITOR: KeyBinding = KeyBinding {
+        key_short: "^X",
+        key: "Ctrl+X",
+        desc_short: "External Edit",
+        description: "Open external editor",
+        action: Action::ExternalEditorOpen {
+            file: std::path::PathBuf::new(),
+        },
+        combos: &[KeyCombo::ctrl(Key::Char('x'))],
+    };
 }
 
 pub const SQL_MODAL_KEYS: &[KeyBinding] = &[
@@ -396,6 +419,7 @@ pub const SQL_MODAL_KEYS: &[KeyBinding] = &[
     sql_modal::TAB,
     sql_modal::CLEAR,
     sql_modal::QUERY_HISTORY,
+    sql_modal::EXTERNAL_EDITOR,
 ];
 
 pub fn sql_modal_normal_query_history(preset: KeymapPreset) -> &'static KeyBinding {

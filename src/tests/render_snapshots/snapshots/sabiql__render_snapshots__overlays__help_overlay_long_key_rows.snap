@@ -13,6 +13,7 @@ test_project ▸ test_db ▸ -                                                  
 │                        │  ↑↓←→                                         Move cursor                                                      ││                        │
 │                        │  Home/End                                     Line start/end                                                   ││                        │
 │                        │  Tab                                          Insert tab / Accept completion                                   ││                        │
+│                        │  Ctrl+X                                       Open external editor                                             ││                        │
 │                        │  :w                                           Preview and confirm UPDATE                                       ││                        │
 │                        │  type                                         Edit cell value                                                  ││                        │
 │                        │  ←→                                           Move cursor                                                      ││                        │

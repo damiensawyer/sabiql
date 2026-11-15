@@ -4,6 +4,7 @@ pub mod completion_engine;
 pub(in crate::cmd) mod connection;
 pub mod effect;
 pub(in crate::cmd) mod er;
+mod external_editor;
 mod metadata_task;
 pub mod render_schedule;
 pub mod runner;

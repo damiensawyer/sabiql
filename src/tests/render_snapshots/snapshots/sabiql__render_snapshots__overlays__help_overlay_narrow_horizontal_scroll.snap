@@ -10,6 +10,7 @@ test_proj… ▸ … ▸ - connected | localhost:5432/test
 │       │                             Mov││      │
 │       │                             Lin││      │
 │       │                             Ins││      │
+│       │                             Ope││      │
 │       │                             Pre││      │
 │       │                             Edi┃│      │
 │       │                             Mov││      │
