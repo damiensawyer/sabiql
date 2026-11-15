@@ -1,4 +1,4 @@
-mod app_config_file;
+pub mod app_config_file;
 
 pub(crate) mod cached_result_exporter;
 pub(crate) mod clipboard;

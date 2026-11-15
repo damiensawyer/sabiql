@@ -24,7 +24,7 @@ pub(in crate::update) fn reduce_connection_lifecycle(
     state: &mut AppState,
     action: &Action,
     _now: std::time::Instant,
-    _services: &AppServices,
+    services: &AppServices,
 ) -> DispatchResult {
     match action {
         Action::TryConnect => DispatchResult::handled_with(try_connect(state)),
@@ -93,6 +93,26 @@ pub(in crate::update) fn reduce_connection_lifecycle(
                     ],
                 ))
             }
+        }
+
+        Action::SwitchToLastConnection => {
+            // Toggle: switch to the stored last connection, and remember the
+            // current one as the next toggle target so pressing again flips back.
+            let Some(target_profile) = state
+                .last_connection_profile()
+                .filter(|p| state.session.active_connection_id() != Some(&p.id))
+                .cloned()
+            else {
+                return DispatchResult::handled();
+            };
+            if let Some(current_id) = state.session.active_connection_id().cloned() {
+                state.set_last_connection_id(Some(current_id));
+            }
+            let dsn = services.dsn_builder.build_dsn(&target_profile);
+            let target = ConnectionTarget::from_profile(&target_profile, dsn);
+            DispatchResult::handled_with(vec![Effect::DispatchActions(vec![
+                Action::SwitchConnection(target),
+            ])])
         }
 
         Action::MySqlConnectionProbeCompleted {
@@ -2484,6 +2504,86 @@ mod tests {
                     .iter()
                     .any(|e| matches!(e, Effect::ClearCompletionEngineCache))
             );
+        }
+    }
+
+    mod switch_to_last_connection {
+        use super::*;
+        use crate::domain::connection::{ConnectionProfile, SslMode};
+        use std::time::Instant;
+
+        fn make_profile(name: &str) -> ConnectionProfile {
+            ConnectionProfile::new_postgres(
+                name,
+                "localhost",
+                5432,
+                "testdb",
+                "user",
+                "pass",
+                SslMode::Prefer,
+            )
+            .unwrap()
+        }
+
+        #[test]
+        fn dispatches_switch_connection_when_last_connection_exists() {
+            let mut state = AppState::new("test".to_string());
+            let profile = make_profile("last_conn");
+            let last_id = profile.id.clone();
+            state.set_connections(vec![profile]);
+            state.set_last_connection_id(Some(last_id));
+
+            let services = AppServices::stub();
+
+            let action = Action::SwitchToLastConnection;
+            let result =
+                reduce_connection_lifecycle(&mut state, &action, Instant::now(), &services);
+
+            // Should return handled result with effects
+            let effects = result.into_effects().expect("should be handled");
+            assert_eq!(effects.len(), 1, "should have 1 effect, got {effects:?}");
+            // Effect should be DispatchActions containing SwitchConnection
+            match &effects[0] {
+                Effect::DispatchActions(actions) => {
+                    assert_eq!(actions.len(), 1);
+                    assert!(matches!(&actions[0], Action::SwitchConnection(_)));
+                }
+                _ => panic!("expected DispatchActions, got {:?}", effects[0]),
+            }
+        }
+
+        #[test]
+        fn is_noop_when_no_last_connection() {
+            let mut state = AppState::new("test".to_string());
+            state.set_connections(vec![make_profile("conn")]);
+            let services = AppServices::stub();
+
+            let action = Action::SwitchToLastConnection;
+            let result =
+                reduce_connection_lifecycle(&mut state, &action, Instant::now(), &services);
+
+            // Should be handled but produce no effects
+            let effects = result.into_effects().expect("should be handled");
+            assert!(effects.is_empty(), "should produce no effects");
+        }
+
+        #[test]
+        fn is_noop_when_last_connection_not_in_list() {
+            let mut state = AppState::new("test".to_string());
+            // Set a different connection's ID as the last_connection
+            let conn = make_profile("conn");
+            let other_id = ConnectionId::new();
+            state.set_connections(vec![conn]);
+            state.set_last_connection_id(Some(other_id));
+            let services = AppServices::stub();
+
+            let action = Action::SwitchToLastConnection;
+            let result =
+                reduce_connection_lifecycle(&mut state, &action, Instant::now(), &services);
+
+            // Should be handled but produce no effects
+            let effects = result.into_effects().expect("should be handled");
+            assert!(effects.is_empty(), "should produce no effects");
         }
     }
 }

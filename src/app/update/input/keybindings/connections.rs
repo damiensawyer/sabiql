@@ -237,6 +237,20 @@ pub mod connection_selector {
         }],
     };
 
+    pub const TOGGLE_PANELS: ModeRow = ModeRow {
+        key_short: "Tab",
+        key: "Tab",
+        desc_short: "Toggle panels",
+        description: "Toggle between last connection and rest of list",
+        bindings: &[ExecBinding {
+            action: Action::ListSelect {
+                target: ListTarget::ConnectionList,
+                motion: ListMotion::Next,
+            },
+            combos: &[KeyCombo::plain(Key::Tab)],
+        }],
+    };
+
     pub const SELECT: ModeRow = ModeRow {
         key_short: "^N/^P/↑↓",
         key: "Ctrl+N / Ctrl+P / ↑ / ↓ / j / k",
@@ -291,12 +305,23 @@ pub mod connection_selector {
     };
 
     pub const DELETE: ModeRow = ModeRow {
-        key_short: "d",
-        key: "d",
+        key_short: "D",
+        key: "D",
         desc_short: "Delete",
         description: "Delete connection",
         bindings: &[ExecBinding {
             action: Action::RequestDeleteSelectedConnection,
+            combos: &[KeyCombo::plain(Key::Char('D'))],
+        }],
+    };
+
+    pub const DUPLICATE: ModeRow = ModeRow {
+        key_short: "d",
+        key: "d",
+        desc_short: "Dup",
+        description: "Duplicate connection",
+        bindings: &[ExecBinding {
+            action: Action::RequestDuplicateSelectedConnection,
             combos: &[KeyCombo::plain(Key::Char('d'))],
         }],
     };
@@ -311,13 +336,27 @@ pub mod connection_selector {
             combos: &[KeyCombo::plain(Key::Esc)],
         }],
     };
+
+    pub const UNDO: ModeRow = ModeRow {
+        key_short: "u",
+        key: "u",
+        desc_short: "Undo",
+        description: "Undo last connection deletion",
+        bindings: &[ExecBinding {
+            action: Action::RequestUndoConnectionDelete,
+            combos: &[KeyCombo::plain(Key::Char('u'))],
+        }],
+    };
 }
 
 pub const CONNECTION_SELECTOR_ROWS: &[ModeRow] = &[
+    connection_selector::TOGGLE_PANELS,
     connection_selector::CONFIRM,
     connection_selector::SELECT,
     connection_selector::NEW,
     connection_selector::EDIT,
     connection_selector::DELETE,
+    connection_selector::DUPLICATE,
+    connection_selector::UNDO,
     connection_selector::CLOSE,
 ];

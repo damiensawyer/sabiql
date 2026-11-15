@@ -157,6 +157,12 @@ fn initialize_state(
             });
             state.set_connections(profiles);
             load_service_entries(&mut state, infrastructure.pg_service_entry_reader.as_ref());
+
+            // Restore the last-used connection (only kept if still in the profile list)
+            if let Ok(Some(id)) = infrastructure.connection_store.load_last_connection_id() {
+                state.set_last_connection_id(Some(id));
+            }
+
             configure_initial_connection_view(&mut state, cli_sqlite.is_some(), has_saved_profiles);
         }
         Err(ConnectionStoreError::VersionMismatch { found, expected }) if cli_sqlite.is_none() => {

@@ -361,6 +361,7 @@ pub enum Action {
     // Connections
     TryConnect,
     SwitchConnection(ConnectionTarget),
+    SwitchToLastConnection,
     ConnectionsLoaded(ConnectionsLoadedPayload),
     ConfirmConnectionSelection,
     ConnectionSetupNextField,
@@ -404,7 +405,13 @@ pub enum Action {
     DeleteConnection(ConnectionId),
     ConnectionDeleted(ConnectionId),
     ConnectionDeleteFailed(String),
+    RequestDuplicateSelectedConnection,
+    DuplicateConnection(ConnectionId),
+    ConnectionDuplicated(ConnectionId),
+    DuplicateConnectionFailed(String),
     RequestEditSelectedConnection,
+    RequestUndoConnectionDelete,
+    ConnectionUndo(ConnectionId),
 
     // SQLite diagnostics
     RunSqliteDiagnosticsQuickCheck,
