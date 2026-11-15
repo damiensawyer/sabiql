@@ -114,6 +114,77 @@ impl ConnectionStore for TomlConnectionStore {
 
         self.write_all(&profiles)
     }
+
+    fn duplicate(&self, id: &ConnectionId) -> Result<ConnectionProfile, ConnectionStoreError> {
+        let _guard = app_config_file::lock();
+        let mut profiles = self.load_all()?;
+
+        let source = profiles
+            .iter()
+            .find(|p| &p.id == id)
+            .ok_or_else(|| ConnectionStoreError::NotFound(id.to_string()))?;
+
+        let new_name = duplicated_name(source.display_name(), &profiles);
+        let new_profile = ConnectionProfile::with_id_and_config(
+            ConnectionId::new(),
+            new_name,
+            source.config.clone(),
+        )
+        .map_err(ConnectionStoreError::InvalidProfile)?;
+
+        profiles.push(new_profile.clone());
+        self.write_all(&profiles)?;
+
+        Ok(new_profile)
+    }
+
+    fn save_last_connection_id(&self, id: &ConnectionId) -> Result<(), ConnectionStoreError> {
+        app_config_file::write_last_connection_id(&self.config_dir, id.as_str())?;
+        Ok(())
+    }
+
+    fn load_last_connection_id(&self) -> Result<Option<ConnectionId>, ConnectionStoreError> {
+        Ok(app_config_file::read_last_connection_id(&self.config_dir)?
+            .filter(|s| !s.is_empty())
+            .map(ConnectionId::from_string))
+    }
+}
+
+/// Produce a duplicated connection name using the next available number suffix.
+///
+/// Naming rules:
+/// - "gumshoe" -> "gumshoe (1)"
+/// - "gumshoe (1)" -> "gumshoe (2)"
+/// - "gumshoe" when "gumshoe (1)" exists -> "gumshoe (2)" etc.
+fn duplicated_name(source_name: &str, existing: &[ConnectionProfile]) -> String {
+    let (base_name, _) = parse_name_suffix(source_name);
+    let mut next_num = existing
+        .iter()
+        .filter_map(|p| match parse_name_suffix(p.display_name()) {
+            (b, Some(n)) if b == base_name => Some(n),
+            _ => None,
+        })
+        .max()
+        .map_or(1, |max| max + 1);
+    while existing
+        .iter()
+        .any(|p| p.display_name() == format!("{base_name} ({next_num})"))
+    {
+        next_num += 1;
+    }
+    format!("{base_name} ({next_num})")
+}
+
+/// Split a connection name into its base name and an optional " (N)" suffix.
+/// e.g. "gumshoe (17)" -> ("gumshoe", Some(17)); "gumshoe" -> ("gumshoe", None)
+fn parse_name_suffix(name: &str) -> (&str, Option<usize>) {
+    if let Some(paren_pos) = name.rfind(" (")
+        && let Some(num_str) = name[paren_pos + 2..].strip_suffix(')')
+        && let Ok(num) = num_str.parse::<usize>()
+    {
+        return (&name[..paren_pos], Some(num));
+    }
+    (name, None)
 }
 
 #[cfg(test)]

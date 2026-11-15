@@ -317,9 +317,52 @@ pub(in crate::cmd) async fn run(
             None
         }
 
+        Effect::DuplicateConnection { id } => {
+            let store = Arc::clone(&connection.connection_store);
+            let tx = action_tx.clone();
+
+            tokio::task::spawn_blocking(move || match store.duplicate(&id) {
+                Ok(duplicated) => {
+                    tx.blocking_send(Action::ConnectionDuplicated(duplicated.id))
+                        .ok();
+                }
+                Err(e) => {
+                    tx.blocking_send(Action::DuplicateConnectionFailed(e.to_string()))
+                        .ok();
+                }
+            });
+            None
+        }
+
+        Effect::UndoConnectionDelete { profile } => {
+            let store = Arc::clone(&connection.connection_store);
+            let tx = action_tx.clone();
+            let profile = *profile;
+
+            tokio::task::spawn_blocking(move || match store.save(&profile) {
+                Ok(()) => {
+                    tx.blocking_send(Action::ConnectionUndo(profile.id.clone()))
+                        .ok();
+                }
+                Err(e) => {
+                    tx.blocking_send(Action::ConnectionDeleteFailed(e.to_string()))
+                        .ok();
+                }
+            });
+            None
+        }
+
         Effect::SwitchConnection { connection_index } => {
             state.connections().get(connection_index).map(|profile| {
                 let dsn = connection.dsn_builder.build_dsn(profile);
+
+                // Save as last connection for quick reconnection
+                let store = Arc::clone(&connection.connection_store);
+                let id = profile.id.clone();
+                tokio::task::spawn_blocking(move || {
+                    let _ = store.save_last_connection_id(&id);
+                });
+
                 Action::SwitchConnection(ConnectionTarget::from_profile(profile, dsn))
             })
         }

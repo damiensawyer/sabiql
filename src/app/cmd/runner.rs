@@ -159,6 +159,8 @@ impl EffectRunner {
             | Effect::LoadConnectionForEdit { .. }
             | Effect::LoadConnections
             | Effect::DeleteConnection { .. }
+            | Effect::DuplicateConnection { .. }
+            | Effect::UndoConnectionDelete { .. }
             | Effect::SwitchConnection { .. }
             | Effect::SwitchToService { .. }) => {
                 if matches!(

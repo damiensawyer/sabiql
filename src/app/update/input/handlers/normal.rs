@@ -124,6 +124,7 @@ pub(super) fn handle_normal_mode(combo: KeyCombo, state: &AppState) -> Action {
         Key::Char('u') if result_navigation && staged_delete_in_progress => {
             Action::UnstageLastStagedRow
         }
+        Key::Char('C') if state.has_last_connection_id() => Action::SwitchToLastConnection,
         _ if kb::global::SQL.combos.contains(&combo) => kb::global::SQL.action.clone(),
         _ if feature_policy.is_enabled(kb::global::ER_DIAGRAM.feature_requirement())
             && kb::global::ER_DIAGRAM.combos.contains(&combo) =>
@@ -135,6 +136,9 @@ pub(super) fn handle_normal_mode(combo: KeyCombo, state: &AppState) -> Action {
         }
 
         Key::Char('z') => Action::BeginKeySequence(Prefix::Z),
+
+        // Undo connection delete (uppercase U, only when undo buffer not empty)
+        Key::Char('U') if state.has_connection_delete_undo() => Action::RequestUndoConnectionDelete,
 
         _ => Action::None,
     }

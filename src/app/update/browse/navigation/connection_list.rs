@@ -76,6 +76,12 @@ pub(in crate::update) fn reduce_connection_list(
             let selected_idx = state.ui.connection_list_selected();
 
             let effect = match state.connection_list_items().get(selected_idx) {
+                Some(ConnectionListItem::LastConnection) => {
+                    // Open the last connection if it exists
+                    state
+                        .last_connection_profile_index()
+                        .map(|connection_index| Effect::SwitchConnection { connection_index })
+                }
                 Some(ConnectionListItem::Profile(i)) => state
                     .connections()
                     .get(*i)
@@ -88,6 +94,13 @@ pub(in crate::update) fn reduce_connection_list(
                 }
                 _ => None,
             };
+
+            // Save the currently active connection as the next toggle target.
+            // This way, pressing C again after connecting to a different profile
+            // will toggle back to the one we just left.
+            if let Some(current_id) = state.session.active_connection_id().cloned() {
+                state.set_last_connection_id(Some(current_id));
+            }
 
             state.modal.set_mode(InputMode::Normal);
 

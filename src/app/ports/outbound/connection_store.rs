@@ -50,4 +50,13 @@ pub trait ConnectionStore: Send + Sync {
     ) -> Result<Option<ConnectionProfile>, ConnectionStoreError>;
 
     fn delete(&self, id: &ConnectionId) -> Result<(), ConnectionStoreError>;
+
+    /// Duplicate a connection, returning the newly created profile.
+    fn duplicate(&self, id: &ConnectionId) -> Result<ConnectionProfile, ConnectionStoreError>;
+
+    /// Persist the last-used connection ID for quick reconnection.
+    fn save_last_connection_id(&self, id: &ConnectionId) -> Result<(), ConnectionStoreError>;
+
+    /// Load the last-used connection ID, if one was saved.
+    fn load_last_connection_id(&self) -> Result<Option<ConnectionId>, ConnectionStoreError>;
 }

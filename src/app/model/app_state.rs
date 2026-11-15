@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -71,6 +71,9 @@ pub struct AppState {
     pub modal: ModalState,
     pub flash_timers: FlashTimerStore,
     pub connection_caches: HashMap<ConnectionId, ConnectionCache>,
+    last_connection_id: Option<ConnectionId>,
+    /// LIFO buffer for undoing connection deletions.
+    connection_delete_undo: VecDeque<ConnectionProfile>,
     connections: Vec<ConnectionProfile>,
     service_entries: Vec<ServiceEntry>,
     connection_list_items: Vec<ConnectionListItem>,
@@ -107,6 +110,8 @@ impl AppState {
             modal: ModalState::default(),
             flash_timers: FlashTimerStore::default(),
             connection_caches: HashMap::default(),
+            last_connection_id: None,
+            connection_delete_undo: VecDeque::new(),
             connections: Vec::new(),
             service_entries: Vec::new(),
             connection_list_items: Vec::new(),
@@ -362,8 +367,12 @@ impl AppState {
     }
 
     fn rebuild_connection_list(&mut self) {
-        self.connection_list_items =
-            list::build_connection_list(self.connections.len(), self.service_entries.len());
+        let show_last = self.last_connection_profile().is_some();
+        self.connection_list_items = list::build_connection_list(
+            self.connections.len(),
+            self.service_entries.len(),
+            show_last,
+        );
     }
 
     pub fn can_retry_connection_error(&self) -> bool {
@@ -372,6 +381,49 @@ impl AppState {
                 || !self.session.can_reenter_connection_setup()
                 || (self.session.active_database_type() == Some(DatabaseType::MySQL)
                     && self.connection_error.can_retry()))
+    }
+
+    /// Get the profile index of the last connection, or None if not available.
+    /// Returns Some(index into connections()) if the last connection is in the profile list.
+    pub fn last_connection_profile_index(&self) -> Option<usize> {
+        let id = self.last_connection_id.as_ref()?;
+        self.connections.iter().position(|c| &c.id == id)
+    }
+
+    // --- Last connection ---
+
+    pub fn last_connection_id(&self) -> Option<&ConnectionId> {
+        self.last_connection_id.as_ref()
+    }
+
+    pub fn set_last_connection_id(&mut self, id: Option<ConnectionId>) {
+        self.last_connection_id = id;
+        self.rebuild_connection_list();
+    }
+
+    /// Returns the last connection profile if it's still in the current connections list.
+    pub fn last_connection_profile(&self) -> Option<&ConnectionProfile> {
+        self.last_connection_id
+            .as_ref()
+            .and_then(|id| self.connections.iter().find(|c| &c.id == id))
+    }
+
+    // --- Undo buffer ---
+
+    pub fn push_connection_delete_undo(&mut self, profile: ConnectionProfile) {
+        // Keep a reasonable limit to avoid memory issues
+        if self.connection_delete_undo.len() >= 50 {
+            self.connection_delete_undo.pop_front();
+        }
+        self.connection_delete_undo.push_back(profile);
+    }
+
+    pub fn pop_connection_delete_undo(&mut self) -> Option<ConnectionProfile> {
+        self.connection_delete_undo.pop_back()
+    }
+
+    pub fn has_connection_delete_undo(&self) -> bool {
+        !self.connection_delete_undo.is_empty()
     }
 
     pub fn can_request_csv_export(&self) -> bool {
@@ -478,6 +530,19 @@ impl AppState {
     pub fn is_stale_explain_run(&self, database_generation: u64, run_id: u64) -> bool {
         !self.query.is_current_run(run_id)
             || self.session.database_generation() != database_generation
+    }
+
+    /// Whether a last connection has been set in memory (not persisted to disk).
+    pub fn has_last_connection_id(&self) -> bool {
+        self.last_connection_id.is_some()
+    }
+
+    /// Get the last connection profile by its stored ID, if still available.
+    pub fn last_connection_profile_mut(&mut self) -> Option<&mut ConnectionProfile> {
+        self.last_connection_id
+            .as_ref()
+            .and_then(|id| self.connections.iter().position(|c| &c.id == id))
+            .map(|idx| &mut self.connections[idx])
     }
 }
 

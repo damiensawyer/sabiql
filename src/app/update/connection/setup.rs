@@ -264,6 +264,7 @@ pub(in crate::update) fn reduce_connection_setup(
             state.connection_setup.set_first_run(false);
             state.modal.set_mode(InputMode::Normal);
             state.connection_caches.remove(id);
+            state.set_last_connection_id(Some(id.clone()));
 
             reset_for_new_connection(state, target);
             if let Some(lower_case_table_names) = mysql_lower_case_table_names {

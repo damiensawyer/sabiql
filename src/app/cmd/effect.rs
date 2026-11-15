@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::domain::connection::{ConnectionConfig, ConnectionId, DatabaseType};
+use crate::domain::connection::{ConnectionConfig, ConnectionId, ConnectionProfile, DatabaseType};
 use crate::domain::query_history::QueryHistoryScope;
 use crate::domain::{DatabaseMetadata, QueryValue, Table, TableSignatureSnapshot};
 use crate::model::browse::session::ConnectionSaveGuard;
@@ -28,6 +28,12 @@ pub enum Effect {
     LoadConnections,
     DeleteConnection {
         id: ConnectionId,
+    },
+    DuplicateConnection {
+        id: ConnectionId,
+    },
+    UndoConnectionDelete {
+        profile: Box<ConnectionProfile>,
     },
 
     FetchMetadata {
