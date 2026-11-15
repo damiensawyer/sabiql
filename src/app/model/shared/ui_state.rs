@@ -31,7 +31,7 @@ pub const MODAL_VERTICAL_BORDER_OVERHEAD: usize = 2;
 pub const MODAL_HORIZONTAL_BORDER_OVERHEAD: usize = 2;
 pub const HELP_HORIZONTAL_SCROLLBAR_HEIGHT: usize = 1;
 pub const HELP_VERTICAL_SCROLLBAR_WIDTH: usize = 1;
-pub const DEFAULT_JSONB_DETAIL_EDITOR_VISIBLE_ROWS: usize = 8;
+pub const DEFAULT_JSON_DETAIL_EDITOR_VISIBLE_ROWS: usize = 8;
 pub const DEFAULT_ROW_DETAIL_CONTENT_VISIBLE_ROWS: usize = 8;
 pub const DEFAULT_ROW_DETAIL_CONTENT_VISIBLE_COLUMNS: usize = 40;
 
@@ -167,49 +167,49 @@ impl ResultSelection {
 #[derive(Debug, Clone, Default)]
 pub struct UiState {
     theme_id: ThemeId,
-    pub focused_pane: FocusedPane,
-    pub focus_mode: FocusMode,
-    pub explorer_selected: usize,
-    pub explorer_scroll_offset: usize,
-    pub explorer_horizontal_offset: usize,
+    focused_pane: FocusedPane,
+    focus_mode: FocusMode,
+    explorer_selected: usize,
+    explorer_scroll_offset: usize,
+    explorer_horizontal_offset: usize,
     // Default::default() leaves this at 0 until the first render updates it, so
     // scroll_max_offset may temporarily return the full content width.
-    pub explorer_content_width: usize,
+    explorer_content_width: usize,
 
-    pub connection_list_selected: usize,
-    pub connection_list_scroll_offset: usize,
-    pub connection_list_pane_height: u16,
+    connection_list_selected: usize,
+    connection_list_scroll_offset: usize,
+    connection_list_pane_height: u16,
 
-    pub table_picker: PickerState,
+    table_picker: PickerState,
 
-    pub er_picker: PickerState,
-    pub er_selected_tables: BTreeSet<String>,
-    pub pending_er_picker: bool,
+    er_picker: PickerState,
+    er_selected_tables: BTreeSet<String>,
+    pending_er_picker: bool,
 
-    pub inspector_tab: InspectorTab,
-    pub inspector_scroll_offset: usize,
-    pub inspector_horizontal_offset: usize,
-    pub inspector_viewport_plan: ViewportPlan,
-    pub inspector_pane_height: u16,
+    inspector_tab: InspectorTab,
+    inspector_scroll_offset: usize,
+    inspector_horizontal_offset: usize,
+    inspector_viewport_plan: ViewportPlan,
+    inspector_pane_height: u16,
 
-    pub explorer_pane_height: u16,
+    explorer_pane_height: u16,
 
-    pub result_viewport_plan: ViewportPlan,
-    pub result_widths_cache: ColumnWidthsCache,
-    pub result_pane_height: u16,
+    result_viewport_plan: ViewportPlan,
+    result_widths_cache: ColumnWidthsCache,
+    result_pane_height: u16,
     pub wrapped_cell: WrappedCellSettings,
     pub wrapped_cell_enabled: bool,
     pub result_wrapped_cell_layout: Option<MeasuredWrappedCellLayout>,
-    pub jsonb_detail_editor_visible_rows: usize,
+    json_detail_editor_visible_rows: usize,
     pub row_detail_content_visible_rows: usize,
     pub row_detail_content_visible_columns: usize,
 
-    pub help: HelpState,
+    help: HelpState,
 
-    pub terminal_width: u16,
-    pub terminal_height: u16,
+    terminal_width: u16,
+    terminal_height: u16,
 
-    pub key_sequence: KeySequenceState,
+    key_sequence: KeySequenceState,
 }
 
 impl UiState {
@@ -217,7 +217,7 @@ impl UiState {
         Self {
             terminal_width: 80,
             terminal_height: 24,
-            jsonb_detail_editor_visible_rows: DEFAULT_JSONB_DETAIL_EDITOR_VISIBLE_ROWS,
+            json_detail_editor_visible_rows: DEFAULT_JSON_DETAIL_EDITOR_VISIBLE_ROWS,
             row_detail_content_visible_rows: DEFAULT_ROW_DETAIL_CONTENT_VISIBLE_ROWS,
             row_detail_content_visible_columns: DEFAULT_ROW_DETAIL_CONTENT_VISIBLE_COLUMNS,
             ..Default::default()
@@ -226,6 +226,229 @@ impl UiState {
 
     pub fn is_focus_mode(&self) -> bool {
         self.focus_mode.is_active()
+    }
+
+    pub fn focused_pane(&self) -> FocusedPane {
+        self.focused_pane
+    }
+
+    pub fn set_focused_pane(&mut self, pane: FocusedPane) {
+        self.focused_pane = pane;
+    }
+
+    pub fn focus_mode(&self) -> FocusMode {
+        self.focus_mode
+    }
+
+    pub fn set_focus_mode(&mut self, mode: FocusMode) {
+        self.focus_mode = mode;
+    }
+
+    pub fn explorer_selected(&self) -> usize {
+        self.explorer_selected
+    }
+
+    pub fn explorer_scroll_offset(&self) -> usize {
+        self.explorer_scroll_offset
+    }
+
+    pub fn explorer_horizontal_offset(&self) -> usize {
+        self.explorer_horizontal_offset
+    }
+
+    pub fn set_explorer_scroll_offset(&mut self, offset: usize) {
+        self.explorer_scroll_offset = offset;
+    }
+
+    pub fn scroll_explorer_page_down(&mut self, item_count: usize, delta: usize) {
+        if item_count == 0 {
+            return;
+        }
+        let visible = self.explorer_visible_items();
+        if visible == 0 {
+            return;
+        }
+        let max_idx = item_count.saturating_sub(1);
+        let max_offset = item_count.saturating_sub(visible);
+        self.explorer_selected = (self.explorer_selected + delta).min(max_idx);
+        self.explorer_scroll_offset = (self.explorer_scroll_offset + delta).min(max_offset);
+    }
+
+    pub fn scroll_explorer_page_up(&mut self, item_count: usize, delta: usize) {
+        if item_count == 0 {
+            return;
+        }
+        if self.explorer_visible_items() == 0 {
+            return;
+        }
+        self.explorer_selected = self.explorer_selected.saturating_sub(delta);
+        self.explorer_scroll_offset = self.explorer_scroll_offset.saturating_sub(delta);
+    }
+
+    pub fn set_explorer_horizontal_offset(&mut self, offset: usize) {
+        self.explorer_horizontal_offset = offset;
+    }
+
+    pub fn explorer_content_width(&self) -> usize {
+        self.explorer_content_width
+    }
+
+    pub fn set_explorer_content_width(&mut self, width: usize) {
+        self.explorer_content_width = width;
+    }
+
+    pub fn connection_list_selected(&self) -> usize {
+        self.connection_list_selected
+    }
+
+    pub fn connection_list_scroll_offset(&self) -> usize {
+        self.connection_list_scroll_offset
+    }
+
+    pub fn set_connection_list_pane_height(&mut self, height: u16) {
+        self.connection_list_pane_height = height;
+    }
+
+    pub fn table_picker(&self) -> &PickerState {
+        &self.table_picker
+    }
+
+    pub fn table_picker_mut(&mut self) -> &mut PickerState {
+        &mut self.table_picker
+    }
+
+    pub fn er_picker(&self) -> &PickerState {
+        &self.er_picker
+    }
+
+    pub fn er_picker_mut(&mut self) -> &mut PickerState {
+        &mut self.er_picker
+    }
+
+    pub fn er_selected_tables(&self) -> &BTreeSet<String> {
+        &self.er_selected_tables
+    }
+
+    pub fn clear_er_selected_tables(&mut self) {
+        self.er_selected_tables.clear();
+    }
+
+    pub fn toggle_er_selected_table(&mut self, table: String) {
+        if !self.er_selected_tables.remove(&table) {
+            self.er_selected_tables.insert(table);
+        }
+    }
+
+    pub fn replace_er_selected_tables(&mut self, tables: impl IntoIterator<Item = String>) {
+        self.er_selected_tables = tables.into_iter().collect();
+    }
+
+    pub fn pending_er_picker(&self) -> bool {
+        self.pending_er_picker
+    }
+
+    pub fn set_pending_er_picker(&mut self, pending: bool) {
+        self.pending_er_picker = pending;
+    }
+
+    pub fn inspector_tab(&self) -> InspectorTab {
+        self.inspector_tab
+    }
+
+    pub fn set_inspector_tab(&mut self, tab: InspectorTab) {
+        self.inspector_tab = tab;
+    }
+
+    pub fn inspector_scroll_offset(&self) -> usize {
+        self.inspector_scroll_offset
+    }
+
+    pub fn set_inspector_scroll_offset(&mut self, offset: usize) {
+        self.inspector_scroll_offset = offset;
+    }
+
+    pub fn inspector_horizontal_offset(&self) -> usize {
+        self.inspector_horizontal_offset
+    }
+
+    pub fn set_inspector_horizontal_offset(&mut self, offset: usize) {
+        self.inspector_horizontal_offset = offset;
+    }
+
+    pub fn inspector_viewport_plan(&self) -> &ViewportPlan {
+        &self.inspector_viewport_plan
+    }
+
+    pub fn set_inspector_viewport_plan(&mut self, plan: ViewportPlan) {
+        self.inspector_viewport_plan = plan;
+    }
+
+    pub fn inspector_pane_height(&self) -> u16 {
+        self.inspector_pane_height
+    }
+
+    pub fn set_inspector_pane_height(&mut self, height: u16) {
+        self.inspector_pane_height = height;
+    }
+
+    pub fn set_explorer_pane_height(&mut self, height: u16) {
+        self.explorer_pane_height = height;
+    }
+
+    pub fn result_viewport_plan(&self) -> &ViewportPlan {
+        &self.result_viewport_plan
+    }
+
+    pub fn set_result_viewport_plan(&mut self, plan: ViewportPlan) {
+        self.result_viewport_plan = plan;
+    }
+
+    pub fn result_widths_cache(&self) -> &ColumnWidthsCache {
+        &self.result_widths_cache
+    }
+
+    pub fn set_result_widths_cache(&mut self, cache: ColumnWidthsCache) {
+        self.result_widths_cache = cache;
+    }
+
+    pub fn set_result_pane_height(&mut self, height: u16) {
+        self.result_pane_height = height;
+    }
+
+    pub fn json_detail_editor_visible_rows(&self) -> usize {
+        self.json_detail_editor_visible_rows
+    }
+
+    pub fn set_json_detail_editor_visible_rows(&mut self, rows: usize) {
+        self.json_detail_editor_visible_rows = rows;
+    }
+
+    pub fn help(&self) -> &HelpState {
+        &self.help
+    }
+
+    pub fn help_mut(&mut self) -> &mut HelpState {
+        &mut self.help
+    }
+
+    pub fn terminal_height(&self) -> u16 {
+        self.terminal_height
+    }
+
+    pub fn set_terminal_height(&mut self, height: u16) {
+        self.terminal_height = height;
+    }
+
+    pub fn set_terminal_width(&mut self, width: u16) {
+        self.terminal_width = width;
+    }
+
+    pub fn key_sequence(&self) -> KeySequenceState {
+        self.key_sequence
+    }
+
+    pub fn set_key_sequence(&mut self, key_sequence: KeySequenceState) {
+        self.key_sequence = key_sequence;
     }
 
     pub fn theme_id(&self) -> ThemeId {
@@ -255,20 +478,12 @@ impl UiState {
         self.result_pane_height.saturating_sub(RESULT_PANE_OVERHEAD) as usize
     }
 
-    pub fn inspector_visible_rows(&self) -> usize {
-        self.inspector_pane_height.saturating_sub(5) as usize
-    }
-
     pub fn explorer_visible_items(&self) -> usize {
         self.explorer_pane_height.saturating_sub(3) as usize
     }
 
     pub fn connection_list_visible_items(&self) -> usize {
         self.connection_list_pane_height as usize
-    }
-
-    pub fn inspector_ddl_visible_rows(&self) -> usize {
-        self.inspector_pane_height.saturating_sub(3) as usize
     }
 
     pub fn help_visible_rows(&self, total_lines: usize, content_width: usize) -> usize {
@@ -360,6 +575,23 @@ impl UiState {
     pub fn reset_er_picker_request(&mut self) {
         self.er_selected_tables.clear();
         self.pending_er_picker = false;
+    }
+}
+
+#[cfg(test)]
+pub mod test_support {
+    use super::UiState;
+
+    impl UiState {
+        #[doc(hidden)]
+        pub fn set_explorer_selected_raw(&mut self, selected: usize) {
+            self.explorer_selected = selected;
+        }
+
+        #[doc(hidden)]
+        pub fn set_connection_list_selected_raw(&mut self, selected: usize) {
+            self.connection_list_selected = selected;
+        }
     }
 }
 
@@ -488,7 +720,7 @@ mod tests {
         }
     }
 
-    mod pane_metrics {
+    mod pane_dimensions {
         use super::*;
 
         #[test]
@@ -529,37 +761,6 @@ mod tests {
             let visible = state.result_visible_rows();
 
             assert_eq!(visible, 0);
-        }
-
-        #[rstest]
-        #[case(10, 7)]
-        #[case(15, 12)]
-        #[case(20, 17)]
-        fn ddl_visible_rows_equals_height_minus_three(
-            #[case] pane_height: u16,
-            #[case] expected: usize,
-        ) {
-            let state = UiState {
-                inspector_pane_height: pane_height,
-                ..Default::default()
-            };
-
-            let visible = state.inspector_ddl_visible_rows();
-
-            assert_eq!(visible, expected);
-        }
-
-        #[test]
-        fn ddl_visible_rows_is_greater_than_standard() {
-            let state = UiState {
-                inspector_pane_height: 20,
-                ..Default::default()
-            };
-
-            let standard = state.inspector_visible_rows();
-            let ddl = state.inspector_ddl_visible_rows();
-
-            assert_eq!(ddl - standard, 2);
         }
 
         #[rstest]

@@ -15,7 +15,9 @@ pub enum InputMode {
     ConnectionSelector,
     ErTablePicker,
     QueryHistoryPicker,
-    JsonbDetail,
-    JsonbEdit,
+    JsonDetail,
+    JsonEdit,
+    CellDetail,
+    SqliteDiagnostics,
     RowDetail,
 }

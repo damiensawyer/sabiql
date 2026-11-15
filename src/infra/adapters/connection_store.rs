@@ -5,13 +5,10 @@ use super::app_config_file::{
     self, config_file_path, get_config_dir as app_config_dir, render_config_file, write_config_file,
 };
 use crate::app::ports::outbound::connection_store::{ConnectionStore, ConnectionStoreError};
-use crate::config::connection_config::{CURRENT_VERSION, ConfigVersionCheck, ConnectionConfigFile};
+use crate::config::{
+    CURRENT_VERSION, ConfigVersionCheck, ConnectionConfigFile, is_supported_config_version,
+};
 use crate::domain::connection::{ConnectionId, ConnectionProfile};
-
-#[cfg(test)]
-use super::app_config_file::CONFIG_FILE_NAME;
-#[cfg(test)]
-use std::path::Path;
 
 pub struct TomlConnectionStore {
     config_dir: PathBuf,
@@ -19,7 +16,7 @@ pub struct TomlConnectionStore {
 
 impl TomlConnectionStore {
     pub fn new() -> Result<Self, ConnectionStoreError> {
-        let config_dir = get_config_dir()?;
+        let config_dir = app_config_dir()?;
         Ok(Self { config_dir })
     }
 
@@ -27,12 +24,12 @@ impl TomlConnectionStore {
         Self { config_dir }
     }
 
-    fn config_file_path(&self) -> PathBuf {
+    pub fn storage_path(&self) -> PathBuf {
         config_file_path(&self.config_dir)
     }
 
     fn load_config_file(&self) -> Result<Option<ConnectionConfigFile>, ConnectionStoreError> {
-        let path = self.config_file_path();
+        let path = config_file_path(&self.config_dir);
         if !path.exists() {
             return Ok(None);
         }
@@ -40,7 +37,7 @@ impl TomlConnectionStore {
         let content = fs::read_to_string(&path)?;
         let version_check: ConfigVersionCheck = toml::from_str(&content)?;
 
-        if version_check.version != CURRENT_VERSION {
+        if !is_supported_config_version(version_check.version) {
             return Err(ConnectionStoreError::VersionMismatch {
                 found: version_check.version,
                 expected: CURRENT_VERSION,
@@ -72,11 +69,6 @@ impl TomlConnectionStore {
 }
 
 impl ConnectionStore for TomlConnectionStore {
-    fn load(&self) -> Result<Option<ConnectionProfile>, ConnectionStoreError> {
-        let profiles = self.load_all()?;
-        Ok(profiles.into_iter().next())
-    }
-
     fn load_all(&self) -> Result<Vec<ConnectionProfile>, ConnectionStoreError> {
         let Some(config) = self.load_config_file()? else {
             return Ok(vec![]);
@@ -128,24 +120,19 @@ impl ConnectionStore for TomlConnectionStore {
 
         self.write_all(&profiles)
     }
-
-    fn storage_path(&self) -> PathBuf {
-        self.config_file_path()
-    }
-}
-
-fn get_config_dir() -> Result<PathBuf, ConnectionStoreError> {
-    Ok(app_config_dir()?)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::app_config_file::CONFIG_FILE_NAME;
     use super::*;
     use crate::domain::connection::SslMode;
+    use crate::domain::connection::{ConnectionConfig, DatabaseType, PostgresConnectionConfig};
+    use std::path::Path;
     use tempfile::TempDir;
 
     fn make_test_profile(name: &str) -> ConnectionProfile {
-        ConnectionProfile::new(
+        ConnectionProfile::new_postgres(
             name,
             "localhost",
             5432,
@@ -196,7 +183,7 @@ ssl_mode = "prefer"
                 result,
                 Err(ConnectionStoreError::VersionMismatch {
                     found: 1,
-                    expected: 2
+                    expected: 3
                 })
             ));
         }
@@ -215,6 +202,39 @@ ssl_mode = "prefer"
                 result,
                 Err(ConnectionStoreError::TomlDeserialize(_))
             ));
+        }
+
+        #[test]
+        fn loads_v2_entries_as_postgresql() {
+            let temp_dir = TempDir::new().unwrap();
+            let config_path = temp_dir.path().join(CONFIG_FILE_NAME);
+
+            let content = r#"
+version = 2
+
+[[connections]]
+id = "test-id"
+name = "Production"
+host = "localhost"
+port = 5432
+database = "testdb"
+username = "testuser"
+password = "testpass"
+ssl_mode = "prefer"
+"#;
+            fs::write(&config_path, content).unwrap();
+
+            let store = TomlConnectionStore::with_config_dir(temp_dir.path().to_path_buf());
+            let profiles = store.load_all().unwrap();
+
+            assert_eq!(profiles.len(), 1);
+            assert_eq!(profiles[0].database_type(), DatabaseType::PostgreSQL);
+            assert_eq!(profiles[0].postgres_config().unwrap().database, "testdb");
+            assert!(
+                fs::read_to_string(&config_path)
+                    .unwrap()
+                    .contains("version = 2")
+            );
         }
 
         #[test]
@@ -240,8 +260,9 @@ ssl_mode = "prefer"
             let profiles = store.load_all().unwrap();
 
             assert_eq!(profiles.len(), 1);
-            assert_eq!(profiles[0].username, "");
-            assert_eq!(profiles[0].host, "");
+            let config = profiles[0].postgres_config().unwrap();
+            assert_eq!(config.username, "");
+            assert_eq!(config.host, "");
         }
     }
 
@@ -286,7 +307,14 @@ ssl_mode = "prefer"
             let mut profile = make_test_profile("Production");
             store.save(&profile).unwrap();
 
-            profile.host = "newhost".to_string();
+            profile.config = ConnectionConfig::PostgreSQL(PostgresConnectionConfig::new(
+                "newhost",
+                5432,
+                "testdb",
+                "testuser",
+                "testpass",
+                SslMode::Prefer,
+            ));
             let result = store.save(&profile);
 
             assert!(result.is_ok());
@@ -390,23 +418,28 @@ ssl_mode = "prefer"
         use super::*;
 
         #[test]
-        fn save_and_load_preserves_data() {
+        fn empty_sqlite_path_returns_invalid_profile() {
             let temp_dir = TempDir::new().unwrap();
+            let config_path = temp_dir.path().join(CONFIG_FILE_NAME);
+
+            let content = r#"
+version = 3
+
+[[connections]]
+id = "sqlite-id"
+name = "Local"
+db_type = "sqlite"
+path = ""
+"#;
+            fs::write(&config_path, content).unwrap();
+
             let store = TomlConnectionStore::with_config_dir(temp_dir.path().to_path_buf());
-            let profile = make_test_profile("Test Connection");
+            let result = store.load_all();
 
-            store.save(&profile).unwrap();
-            let loaded = store.load().unwrap();
-
-            assert!(loaded.is_some());
-            let loaded = loaded.unwrap();
-            assert_eq!(loaded.name.as_str(), profile.name.as_str());
-            assert_eq!(loaded.host, profile.host);
-            assert_eq!(loaded.port, profile.port);
-            assert_eq!(loaded.database, profile.database);
-            assert_eq!(loaded.username, profile.username);
-            assert_eq!(loaded.password, profile.password);
-            assert_eq!(loaded.ssl_mode, profile.ssl_mode);
+            assert!(matches!(
+                result,
+                Err(ConnectionStoreError::InvalidProfile(_))
+            ));
         }
     }
 
@@ -454,7 +487,7 @@ ssl_mode = "prefer"
                 result,
                 Err(ConnectionStoreError::VersionMismatch {
                     found: 1,
-                    expected: 2
+                    expected: 3
                 })
             ));
 
@@ -498,16 +531,24 @@ ssl_mode = "prefer"
             store.save(&profile1).unwrap();
             store.save(&profile2).unwrap();
 
-            profile2.host = "updated-host".to_string();
+            profile2.config = ConnectionConfig::PostgreSQL(PostgresConnectionConfig::new(
+                "updated-host",
+                5432,
+                "testdb",
+                "testuser",
+                "testpass",
+                SslMode::Prefer,
+            ));
             store.save(&profile2).unwrap();
 
             let all = store.load_all().unwrap();
             assert_eq!(all.len(), 2);
             assert!(all.iter().any(|p| p.name.as_str() == "First"));
-            assert!(
-                all.iter()
-                    .any(|p| p.name.as_str() == "Second" && p.host == "updated-host")
-            );
+            assert!(all.iter().any(|p| {
+                p.name.as_str() == "Second"
+                    && p.postgres_config()
+                        .is_some_and(|config| config.host == "updated-host")
+            }));
         }
     }
 }

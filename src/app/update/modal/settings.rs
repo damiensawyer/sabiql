@@ -3,7 +3,6 @@ use std::time::Instant;
 use crate::cmd::effect::Effect;
 use crate::model::app_state::AppState;
 use crate::model::shared::input_mode::InputMode;
-use crate::model::shared::text_input::TextInputEditing;
 use crate::ports::outbound::AppSettings;
 use crate::update::action::{Action, InputTarget, ModalKind};
 use crate::update::dispatch_result::DispatchResult;
@@ -110,7 +109,7 @@ pub(super) fn reduce_settings(
         Action::SettingsSaveFailed(error) => {
             state
                 .messages
-                .set_error_at(format!("Failed to save settings: {error}"), now);
+                .set_error(format!("Failed to save settings: {error}"));
             DispatchResult::handled()
         }
         _ => DispatchResult::pass(),

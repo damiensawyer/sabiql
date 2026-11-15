@@ -1,9 +1,8 @@
 use crate::model::shared::cursor::CursorMove;
 
 use super::text_input::{
-    TextInputEditing, TextInputLike, TextInputState, TextKillDirection, next_word_start,
-    previous_word_start, readline_forward_word_end, readline_previous_whitespace_boundary,
-    readline_previous_word_start,
+    TextInputState, TextKillDirection, char_to_byte_index, next_word_start, previous_word_start,
+    readline_forward_word_end, readline_previous_whitespace_boundary, readline_previous_word_start,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -41,6 +40,18 @@ impl MultiLineInputState {
 
     pub fn scroll_row(&self) -> usize {
         self.scroll_row
+    }
+
+    pub fn content(&self) -> &str {
+        self.inner.content()
+    }
+
+    pub fn cursor(&self) -> usize {
+        self.inner.cursor()
+    }
+
+    pub fn char_count(&self) -> usize {
+        self.inner.char_count()
     }
 
     pub fn set_cursor(&mut self, pos: usize) {
@@ -111,6 +122,19 @@ impl MultiLineInputState {
             readline_previous_whitespace_boundary(self.content(), self.cursor()),
             self.cursor(),
         )
+    }
+
+    pub fn kill(&mut self, direction: TextKillDirection) -> String {
+        match direction {
+            TextKillDirection::ToLineEnd => self.kill_to_line_end(),
+            TextKillDirection::ToLineStart => self.kill_to_line_start(),
+            TextKillDirection::ReadlineWordEnd => self.kill_next_word(),
+            TextKillDirection::ReadlinePreviousWhitespace => self.kill_previous_word(),
+        }
+    }
+
+    pub fn yank(&mut self, text: &str) {
+        self.insert_str(text);
     }
 
     pub fn set_content(&mut self, s: String) {
@@ -256,7 +280,7 @@ impl MultiLineInputState {
     }
 
     pub fn char_to_byte_index(&self, char_idx: usize) -> usize {
-        char_to_byte_index_impl(self.content(), char_idx)
+        char_to_byte_index(self.content(), char_idx)
     }
 
     fn rebuild_derived(&mut self) {
@@ -332,27 +356,6 @@ impl MultiLineInputState {
     }
 }
 
-impl TextInputLike for MultiLineInputState {
-    fn text_input(&self) -> &TextInputState {
-        &self.inner
-    }
-}
-
-impl TextInputEditing for MultiLineInputState {
-    fn kill(&mut self, direction: TextKillDirection) -> String {
-        match direction {
-            TextKillDirection::ToLineEnd => self.kill_to_line_end(),
-            TextKillDirection::ToLineStart => self.kill_to_line_start(),
-            TextKillDirection::ReadlineWordEnd => self.kill_next_word(),
-            TextKillDirection::ReadlinePreviousWhitespace => self.kill_previous_word(),
-        }
-    }
-
-    fn yank(&mut self, text: &str) {
-        self.insert_str(text);
-    }
-}
-
 impl MultiLineDerivedState {
     fn default_empty_line() -> Self {
         Self {
@@ -396,12 +399,6 @@ fn find_cursor_position(line_spans: &[LineSpan], cursor: usize) -> (usize, usize
         .saturating_sub(1);
     let span = line_spans.get(row).copied().unwrap_or_default();
     (row, cursor.saturating_sub(span.start).min(span.len))
-}
-
-fn char_to_byte_index_impl(s: &str, char_idx: usize) -> usize {
-    s.char_indices()
-        .nth(char_idx)
-        .map_or(s.len(), |(byte_idx, _)| byte_idx)
 }
 
 #[cfg(test)]

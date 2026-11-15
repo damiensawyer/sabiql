@@ -928,10 +928,10 @@ pub const CONFIRM_DIALOG_KEYS: &[KeyBinding] = &[
 ];
 
 // =============================================================================
-// JSONB Detail (Viewing)
+// JSON Detail (Viewing)
 // =============================================================================
 
-pub mod jsonb_detail {
+pub mod json_detail {
     use crate::update::action::{Action, CursorMove, InputTarget, ModalKind};
     use crate::update::input::keybindings::{ExecBinding, Key, KeyCombo, ModeRow};
 
@@ -941,7 +941,7 @@ pub mod jsonb_detail {
         desc_short: "Copy",
         description: "Copy full JSON",
         bindings: &[ExecBinding {
-            action: Action::JsonbYankAll,
+            action: Action::JsonYankAll,
             combos: &[KeyCombo::plain(Key::Char('y'))],
         }],
     };
@@ -953,11 +953,11 @@ pub mod jsonb_detail {
         description: "Enter Insert mode / append at line end",
         bindings: &[
             ExecBinding {
-                action: Action::JsonbEnterEdit,
+                action: Action::JsonEnterEdit,
                 combos: &[KeyCombo::plain(Key::Char('i'))],
             },
             ExecBinding {
-                action: Action::JsonbAppendInsert,
+                action: Action::JsonAppendInsert,
                 combos: &[KeyCombo::plain(Key::Char('A'))],
             },
         ],
@@ -969,7 +969,7 @@ pub mod jsonb_detail {
         desc_short: "Search",
         description: "Search JSON text",
         bindings: &[ExecBinding {
-            action: Action::JsonbEnterSearch,
+            action: Action::JsonEnterSearch,
             combos: &[KeyCombo::plain(Key::Char('/'))],
         }],
     };
@@ -981,11 +981,11 @@ pub mod jsonb_detail {
         description: "Jump to next / previous search result",
         bindings: &[
             ExecBinding {
-                action: Action::JsonbSearchNext,
+                action: Action::JsonSearchNext,
                 combos: &[KeyCombo::plain(Key::Char('n'))],
             },
             ExecBinding {
-                action: Action::JsonbSearchPrev,
+                action: Action::JsonSearchPrev,
                 combos: &[KeyCombo::plain(Key::Char('N'))],
             },
         ],
@@ -999,21 +999,21 @@ pub mod jsonb_detail {
         bindings: &[
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::Left,
                 },
                 combos: &[KeyCombo::plain(Key::Char('h')), KeyCombo::plain(Key::Left)],
             },
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::Right,
                 },
                 combos: &[KeyCombo::plain(Key::Char('l')), KeyCombo::plain(Key::Right)],
             },
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::Down,
                 },
                 combos: &[
@@ -1024,7 +1024,7 @@ pub mod jsonb_detail {
             },
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::Up,
                 },
                 combos: &[
@@ -1044,28 +1044,28 @@ pub mod jsonb_detail {
         bindings: &[
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::LineStart,
                 },
                 combos: &[KeyCombo::plain(Key::Char('0'))],
             },
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::LineEnd,
                 },
                 combos: &[KeyCombo::plain(Key::Char('$'))],
             },
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::WordForward,
                 },
                 combos: &[KeyCombo::plain(Key::Char('w'))],
             },
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::WordBackward,
                 },
                 combos: &[KeyCombo::plain(Key::Char('b'))],
@@ -1081,28 +1081,28 @@ pub mod jsonb_detail {
         bindings: &[
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::LastLine,
                 },
                 combos: &[KeyCombo::plain(Key::Char('G'))],
             },
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::ViewportTop,
                 },
                 combos: &[KeyCombo::plain(Key::Char('H'))],
             },
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::ViewportMiddle,
                 },
                 combos: &[KeyCombo::plain(Key::Char('M'))],
             },
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::ViewportBottom,
                 },
                 combos: &[KeyCombo::plain(Key::Char('L'))],
@@ -1114,23 +1114,191 @@ pub mod jsonb_detail {
         key_short: "Esc",
         key: "Esc / q",
         desc_short: "Close",
-        description: "Close JSONB detail",
+        description: "Close JSON detail",
         bindings: &[ExecBinding {
-            action: Action::CloseModal(ModalKind::JsonbDetail),
+            action: Action::CloseModal(ModalKind::JsonDetail),
             combos: &[KeyCombo::plain(Key::Esc), KeyCombo::plain(Key::Char('q'))],
         }],
     };
 }
 
-pub const JSONB_DETAIL_ROWS: &[ModeRow] = &[
-    jsonb_detail::YANK,
-    jsonb_detail::INSERT,
-    jsonb_detail::SEARCH,
-    jsonb_detail::NEXT_PREV,
-    jsonb_detail::MOVE,
-    jsonb_detail::JUMP,
-    jsonb_detail::VIEW,
-    jsonb_detail::CLOSE,
+pub const JSON_DETAIL_ROWS: &[ModeRow] = &[
+    json_detail::YANK,
+    json_detail::INSERT,
+    json_detail::SEARCH,
+    json_detail::NEXT_PREV,
+    json_detail::MOVE,
+    json_detail::JUMP,
+    json_detail::VIEW,
+    json_detail::CLOSE,
+];
+
+// =============================================================================
+// Cell Detail
+// =============================================================================
+
+pub mod cell_detail {
+    use crate::update::action::{Action, ModalKind, ScrollAmount, ScrollDirection, ScrollTarget};
+    use crate::update::input::keybindings::{ExecBinding, Key, KeyCombo, ModeRow};
+
+    pub const YANK: ModeRow = ModeRow {
+        key_short: "y",
+        key: "y",
+        desc_short: "Copy",
+        description: "Copy full cell text",
+        bindings: &[ExecBinding {
+            action: Action::CellDetailYankAll,
+            combos: &[KeyCombo::plain(Key::Char('y'))],
+        }],
+    };
+
+    pub const SEARCH: ModeRow = ModeRow {
+        key_short: "/",
+        key: "/",
+        desc_short: "Search",
+        description: "Search cell text",
+        bindings: &[ExecBinding {
+            action: Action::CellDetailEnterSearch,
+            combos: &[KeyCombo::plain(Key::Char('/'))],
+        }],
+    };
+
+    pub const NEXT_PREV: ModeRow = ModeRow {
+        key_short: "n/N",
+        key: "n / N",
+        desc_short: "Next/Prev",
+        description: "Jump to next / previous search result",
+        bindings: &[
+            ExecBinding {
+                action: Action::CellDetailSearchNext,
+                combos: &[KeyCombo::plain(Key::Char('n'))],
+            },
+            ExecBinding {
+                action: Action::CellDetailSearchPrev,
+                combos: &[KeyCombo::plain(Key::Char('N'))],
+            },
+        ],
+    };
+
+    pub const SCROLL: ModeRow = ModeRow {
+        key_short: "j/k/↑↓",
+        key: "j / k / Ctrl+N / Ctrl+P / ↑ / ↓",
+        desc_short: "Scroll",
+        description: "Scroll text down / up",
+        bindings: &[
+            ExecBinding {
+                action: Action::Scroll {
+                    target: ScrollTarget::CellDetail,
+                    direction: ScrollDirection::Down,
+                    amount: ScrollAmount::Line,
+                },
+                combos: &[
+                    KeyCombo::plain(Key::Char('j')),
+                    KeyCombo::ctrl(Key::Char('n')),
+                    KeyCombo::plain(Key::Down),
+                ],
+            },
+            ExecBinding {
+                action: Action::Scroll {
+                    target: ScrollTarget::CellDetail,
+                    direction: ScrollDirection::Up,
+                    amount: ScrollAmount::Line,
+                },
+                combos: &[
+                    KeyCombo::plain(Key::Char('k')),
+                    KeyCombo::ctrl(Key::Char('p')),
+                    KeyCombo::plain(Key::Up),
+                ],
+            },
+        ],
+    };
+
+    pub const PAGE: ModeRow = ModeRow {
+        key_short: "^D/^U Pg",
+        key: "Ctrl+D / Ctrl+U / PageDown / PageUp",
+        desc_short: "Page",
+        description: "Scroll by page",
+        bindings: &[
+            ExecBinding {
+                action: Action::Scroll {
+                    target: ScrollTarget::CellDetail,
+                    direction: ScrollDirection::Down,
+                    amount: ScrollAmount::HalfPage,
+                },
+                combos: &[KeyCombo::ctrl(Key::Char('d'))],
+            },
+            ExecBinding {
+                action: Action::Scroll {
+                    target: ScrollTarget::CellDetail,
+                    direction: ScrollDirection::Up,
+                    amount: ScrollAmount::HalfPage,
+                },
+                combos: &[KeyCombo::ctrl(Key::Char('u'))],
+            },
+            ExecBinding {
+                action: Action::Scroll {
+                    target: ScrollTarget::CellDetail,
+                    direction: ScrollDirection::Down,
+                    amount: ScrollAmount::FullPage,
+                },
+                combos: &[KeyCombo::plain(Key::PageDown)],
+            },
+            ExecBinding {
+                action: Action::Scroll {
+                    target: ScrollTarget::CellDetail,
+                    direction: ScrollDirection::Up,
+                    amount: ScrollAmount::FullPage,
+                },
+                combos: &[KeyCombo::plain(Key::PageUp)],
+            },
+        ],
+    };
+
+    pub const TOP_BOTTOM: ModeRow = ModeRow {
+        key_short: "Home/End",
+        key: "Home / End",
+        desc_short: "Top/Btm",
+        description: "Jump to top / bottom",
+        bindings: &[
+            ExecBinding {
+                action: Action::Scroll {
+                    target: ScrollTarget::CellDetail,
+                    direction: ScrollDirection::Up,
+                    amount: ScrollAmount::ToStart,
+                },
+                combos: &[KeyCombo::plain(Key::Home)],
+            },
+            ExecBinding {
+                action: Action::Scroll {
+                    target: ScrollTarget::CellDetail,
+                    direction: ScrollDirection::Down,
+                    amount: ScrollAmount::ToEnd,
+                },
+                combos: &[KeyCombo::plain(Key::End)],
+            },
+        ],
+    };
+
+    pub const CLOSE: ModeRow = ModeRow {
+        key_short: "Esc",
+        key: "Esc / q",
+        desc_short: "Close",
+        description: "Close cell detail",
+        bindings: &[ExecBinding {
+            action: Action::CloseModal(ModalKind::CellDetail),
+            combos: &[KeyCombo::plain(Key::Esc), KeyCombo::plain(Key::Char('q'))],
+        }],
+    };
+}
+
+pub const CELL_DETAIL_ROWS: &[ModeRow] = &[
+    cell_detail::YANK,
+    cell_detail::SEARCH,
+    cell_detail::NEXT_PREV,
+    cell_detail::SCROLL,
+    cell_detail::PAGE,
+    cell_detail::TOP_BOTTOM,
+    cell_detail::CLOSE,
 ];
 
 // =============================================================================
@@ -1308,10 +1476,10 @@ pub const ROW_DETAIL_FOOTER_ROWS: &[ModeRow] =
     &[row_detail::YANK, row_detail::YANK_JSON, row_detail::CLOSE];
 
 // =============================================================================
-// JSONB Search (active search input)
+// JSON Search (active search input)
 // =============================================================================
 
-pub mod jsonb_search {
+pub mod json_search {
     use crate::update::action::Action;
     use crate::update::input::keybindings::{Key, KeyBinding, KeyCombo};
 
@@ -1329,7 +1497,7 @@ pub mod jsonb_search {
         key: "Enter",
         desc_short: "Confirm",
         description: "Confirm search",
-        action: Action::JsonbSearchSubmit,
+        action: Action::JsonSearchSubmit,
         combos: &[KeyCombo::plain(Key::Enter)],
     };
 
@@ -1338,22 +1506,60 @@ pub mod jsonb_search {
         key: "Esc",
         desc_short: "Cancel",
         description: "Cancel search",
-        action: Action::JsonbExitSearch,
+        action: Action::JsonExitSearch,
         combos: &[KeyCombo::plain(Key::Esc)],
     };
 }
 
-pub const JSONB_SEARCH_KEYS: &[KeyBinding] = &[
-    jsonb_search::TYPE_SEARCH,
-    jsonb_search::CONFIRM,
-    jsonb_search::CANCEL,
+pub const JSON_SEARCH_KEYS: &[KeyBinding] = &[
+    json_search::TYPE_SEARCH,
+    json_search::CONFIRM,
+    json_search::CANCEL,
+];
+
+pub mod cell_detail_search {
+    use crate::update::action::Action;
+    use crate::update::input::keybindings::{Key, KeyBinding, KeyCombo};
+
+    pub const TYPE_SEARCH: KeyBinding = KeyBinding {
+        key_short: "type",
+        key: "type",
+        desc_short: "Search",
+        description: "Type to search",
+        action: Action::None,
+        combos: &[],
+    };
+
+    pub const CONFIRM: KeyBinding = KeyBinding {
+        key_short: "Enter",
+        key: "Enter",
+        desc_short: "Confirm",
+        description: "Confirm search",
+        action: Action::CellDetailSearchSubmit,
+        combos: &[KeyCombo::plain(Key::Enter)],
+    };
+
+    pub const CANCEL: KeyBinding = KeyBinding {
+        key_short: "Esc",
+        key: "Esc",
+        desc_short: "Cancel",
+        description: "Cancel search",
+        action: Action::CellDetailExitSearch,
+        combos: &[KeyCombo::plain(Key::Esc)],
+    };
+}
+
+pub const CELL_DETAIL_SEARCH_KEYS: &[KeyBinding] = &[
+    cell_detail_search::TYPE_SEARCH,
+    cell_detail_search::CONFIRM,
+    cell_detail_search::CANCEL,
 ];
 
 // =============================================================================
-// JSONB Edit
+// JSON Edit
 // =============================================================================
 
-pub mod jsonb_edit {
+pub mod json_edit {
     use crate::update::action::{Action, CursorMove, InputTarget};
     use crate::update::input::keybindings::{ExecBinding, Key, KeyCombo, ModeRow};
 
@@ -1363,7 +1569,7 @@ pub mod jsonb_edit {
         desc_short: "Normal",
         description: "Return to Normal mode",
         bindings: &[ExecBinding {
-            action: Action::JsonbExitEdit,
+            action: Action::JsonExitEdit,
             combos: &[KeyCombo::plain(Key::Esc)],
         }],
     };
@@ -1376,28 +1582,28 @@ pub mod jsonb_edit {
         bindings: &[
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::Left,
                 },
                 combos: &[KeyCombo::plain(Key::Left)],
             },
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::Right,
                 },
                 combos: &[KeyCombo::plain(Key::Right)],
             },
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::Up,
                 },
                 combos: &[KeyCombo::plain(Key::Up)],
             },
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::Down,
                 },
                 combos: &[KeyCombo::plain(Key::Down)],
@@ -1413,14 +1619,14 @@ pub mod jsonb_edit {
         bindings: &[
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::Home,
                 },
                 combos: &[KeyCombo::plain(Key::Home)],
             },
             ExecBinding {
                 action: Action::TextMoveCursor {
-                    target: InputTarget::JsonbEdit,
+                    target: InputTarget::JsonEdit,
                     direction: CursorMove::End,
                 },
                 combos: &[KeyCombo::plain(Key::End)],
@@ -1429,8 +1635,74 @@ pub mod jsonb_edit {
     };
 }
 
-pub const JSONB_EDIT_ROWS: &[ModeRow] = &[
-    jsonb_edit::ESC_NORMAL,
-    jsonb_edit::MOVE,
-    jsonb_edit::HOME_END,
+pub const JSON_EDIT_ROWS: &[ModeRow] =
+    &[json_edit::ESC_NORMAL, json_edit::MOVE, json_edit::HOME_END];
+
+pub mod sqlite_diagnostics {
+    use crate::update::action::{Action, ModalKind, ScrollAmount, ScrollDirection, ScrollTarget};
+    use crate::update::input::keybindings::{ExecBinding, Key, KeyCombo, ModeRow};
+
+    pub const ESC_CLOSE: ModeRow = ModeRow {
+        key_short: "Esc",
+        key: "Esc",
+        desc_short: "Close",
+        description: "Close",
+        bindings: &[ExecBinding {
+            action: Action::CloseModal(ModalKind::SqliteDiagnostics),
+            combos: &[KeyCombo::plain(Key::Esc)],
+        }],
+    };
+
+    pub const SCROLL: ModeRow = ModeRow {
+        key_short: "↑↓",
+        key: "↑ / ↓",
+        desc_short: "Scroll",
+        description: "Scroll diagnostics",
+        bindings: &[
+            ExecBinding {
+                action: Action::Scroll {
+                    target: ScrollTarget::SqliteDiagnostics,
+                    direction: ScrollDirection::Up,
+                    amount: ScrollAmount::Line,
+                },
+                combos: &[KeyCombo::plain(Key::Up)],
+            },
+            ExecBinding {
+                action: Action::Scroll {
+                    target: ScrollTarget::SqliteDiagnostics,
+                    direction: ScrollDirection::Down,
+                    amount: ScrollAmount::Line,
+                },
+                combos: &[KeyCombo::plain(Key::Down)],
+            },
+        ],
+    };
+    pub const HELP: ModeRow = ModeRow {
+        key_short: "?",
+        key: "?",
+        desc_short: "Help",
+        description: "Toggle help",
+        bindings: &[ExecBinding {
+            action: Action::ToggleModal(ModalKind::Help),
+            combos: &[KeyCombo::plain(Key::Char('?'))],
+        }],
+    };
+
+    pub const RUN_QUICK_CHECK: ModeRow = ModeRow {
+        key_short: "r",
+        key: "r",
+        desc_short: "Run check",
+        description: "Run quick check",
+        bindings: &[ExecBinding {
+            action: Action::RunSqliteDiagnosticsQuickCheck,
+            combos: &[KeyCombo::plain(Key::Char('r'))],
+        }],
+    };
+}
+
+pub const SQLITE_DIAGNOSTICS_ROWS: &[ModeRow] = &[
+    sqlite_diagnostics::SCROLL,
+    sqlite_diagnostics::RUN_QUICK_CHECK,
+    sqlite_diagnostics::HELP,
+    sqlite_diagnostics::ESC_CLOSE,
 ];

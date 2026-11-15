@@ -1,3 +1,8 @@
+use crate::domain::sql_lex::{
+    advance_single_quote, skip_block_comment, skip_double_quoted_identifier, skip_line_comment,
+    skip_sqlite_quoted_identifier,
+};
+
 // - `Unsupported`: a recognizable SQL command that this classifier does not yet classify
 //   (e.g. GRANT, COPY, DO, MERGE). Risk cannot be assessed, so execution requires user
 //   acknowledgment (see policy::write::sql_risk).
@@ -20,7 +25,12 @@ pub enum StatementKind {
 }
 
 pub fn classify(sql: &str) -> StatementKind {
-    let lower = sql.trim().to_lowercase();
+    let trimmed = sql.trim();
+    if let Some(kind) = executed_data_modifying_cte_kind(trimmed) {
+        return kind;
+    }
+    let statement = statement_after_leading_ctes(trimmed);
+    let lower = statement.to_lowercase();
     if lower.is_empty() {
         return StatementKind::Other;
     }
@@ -28,69 +38,32 @@ pub fn classify(sql: &str) -> StatementKind {
     classify_inner(&lower, &chars)
 }
 
-pub fn has_executed_data_modifying_cte(sql: &str) -> bool {
-    let lower = sql.trim().to_lowercase();
-    if lower.is_empty() {
-        return false;
-    }
-    let chars: Vec<(usize, char)> = lower.char_indices().collect();
-    if matches!(
-        explain_executes_inner_statement(&lower, &chars),
-        Some(false)
-    ) {
-        return false;
-    }
+fn executed_data_modifying_cte_kind(sql: &str) -> Option<StatementKind> {
+    let trimmed = sql.trim();
+    let chars: Vec<(usize, char)> = trimmed.char_indices().collect();
+    let tokens = collect_top_level_tokens(trimmed, &chars);
+    let lowers: Vec<String> = tokens
+        .iter()
+        .map(|(_, token)| token.to_ascii_lowercase())
+        .collect();
 
-    let mut i = 0;
-    let mut depth: i32 = 0;
-    let mut in_string = false;
-    let mut in_cte = false;
-
-    while i < chars.len() {
-        let (byte_pos, ch) = chars[i];
-
-        if let Some(next_i) = skip_line_comment(&chars, i, ch) {
-            i = next_i;
-            continue;
-        }
-        if let Some(next_i) = skip_block_comment(&chars, i, ch) {
-            i = next_i;
-            continue;
-        }
-        if let Some(next_i) = advance_single_quote(&chars, i, ch, &mut in_string) {
-            i = next_i;
-            continue;
-        }
-        if in_string {
-            i += 1;
-            continue;
-        }
-        if let Some(next_i) = skip_double_quoted_identifier(&chars, i, ch) {
-            i = next_i;
-            continue;
-        }
-        if let Some(next_i) = skip_dollar_quoted_string(&lower, &chars, i, byte_pos, ch) {
-            i = next_i;
-            continue;
-        }
-
-        update_parentheses_depth(ch, &mut depth);
-
-        if (ch.is_alphabetic() || ch == '_') && is_word_start(&chars, i) {
-            let rest = &lower[byte_pos..];
-            if depth == 0 && is_keyword(rest, "with") {
-                in_cte = true;
-            } else if in_cte && depth == 0 && match_keyword(rest).is_some() {
-                return false;
-            } else if in_cte && depth > 0 && is_data_modifying_keyword(rest) {
-                return true;
+    let with_index = match lowers.first().map(String::as_str) {
+        Some("with") => 0,
+        Some("explain") => {
+            let lower = trimmed.to_ascii_lowercase();
+            let lower_chars: Vec<(usize, char)> = lower.char_indices().collect();
+            if !matches!(
+                explain_executes_inner_statement(&lower, &lower_chars),
+                Some(true)
+            ) {
+                return None;
             }
+            lowers.iter().position(|token| token == "with")?
         }
+        _ => return None,
+    };
 
-        i += 1;
-    }
-
-    false
+    leading_cte_write_kind(&trimmed[tokens[with_index].0..])
 }
 
 fn explain_executes_inner_statement(lower: &str, chars: &[(usize, char)]) -> Option<bool> {
@@ -153,13 +126,6 @@ fn explain_executes_inner_statement(lower: &str, chars: &[(usize, char)]) -> Opt
     None
 }
 
-fn is_data_modifying_keyword(rest: &str) -> bool {
-    is_keyword(rest, "insert")
-        || is_keyword(rest, "update")
-        || is_keyword(rest, "delete")
-        || is_keyword(rest, "merge")
-}
-
 pub fn drop_subtype(sql: &str) -> Option<String> {
     let trimmed = sql.trim();
     let chars: Vec<(usize, char)> = trimmed.char_indices().collect();
@@ -178,8 +144,197 @@ pub fn first_keyword(sql: &str) -> Option<String> {
         .map(|(_, token)| token.to_uppercase())
 }
 
+pub(crate) fn statement_after_leading_ctes(sql: &str) -> &str {
+    let trimmed = sql.trim();
+    let chars: Vec<(usize, char)> = trimmed.char_indices().collect();
+    let tokens = collect_top_level_tokens(trimmed, &chars);
+    let lowers: Vec<String> = tokens
+        .iter()
+        .map(|(_, token)| token.to_lowercase())
+        .collect();
+    if lowers.first().map(String::as_str) != Some("with") {
+        return trimmed;
+    }
+
+    let mut cursor = 1;
+    if lowers.get(cursor).map(String::as_str) == Some("recursive") {
+        cursor += 1;
+    }
+
+    loop {
+        cursor += 1;
+        if lowers.get(cursor).map(String::as_str) != Some("as") {
+            return trimmed;
+        }
+        cursor += 1;
+        if lowers.get(cursor).map(String::as_str) == Some("not") {
+            cursor += 1;
+            if lowers.get(cursor).map(String::as_str) == Some("materialized") {
+                cursor += 1;
+            }
+        } else if lowers.get(cursor).map(String::as_str) == Some("materialized") {
+            cursor += 1;
+        }
+
+        match lowers.get(cursor).map(String::as_str) {
+            Some(",") => cursor += 1,
+            Some(_) => return &trimmed[tokens[cursor].0..],
+            None => return trimmed,
+        }
+    }
+}
+
+fn leading_cte_write_kind(sql: &str) -> Option<StatementKind> {
+    let trimmed = sql.trim();
+    let chars: Vec<(usize, char)> = trimmed.char_indices().collect();
+    let tokens = collect_top_level_tokens(trimmed, &chars);
+    let lowers: Vec<String> = tokens
+        .iter()
+        .map(|(_, token)| token.to_lowercase())
+        .collect();
+    if lowers.first().map(String::as_str) != Some("with") {
+        return None;
+    }
+
+    let mut cursor = 1;
+    if lowers.get(cursor).map(String::as_str) == Some("recursive") {
+        cursor += 1;
+    }
+
+    loop {
+        cursor += 1;
+        if lowers.get(cursor).map(String::as_str) != Some("as") {
+            return None;
+        }
+
+        let mut body_search_start = token_end(&tokens[cursor]);
+        cursor += 1;
+        if lowers.get(cursor).map(String::as_str) == Some("not") {
+            body_search_start = token_end(&tokens[cursor]);
+            cursor += 1;
+            if lowers.get(cursor).map(String::as_str) == Some("materialized") {
+                body_search_start = token_end(&tokens[cursor]);
+                cursor += 1;
+            }
+        } else if lowers.get(cursor).map(String::as_str) == Some("materialized") {
+            body_search_start = token_end(&tokens[cursor]);
+            cursor += 1;
+        }
+
+        let body_end = tokens.get(cursor).map_or(trimmed.len(), |(pos, _)| *pos);
+        if let Some(body) = cte_body_sql(trimmed, &chars, body_search_start, body_end)
+            && let Some(kind) = cte_body_write_kind(body)
+        {
+            return Some(kind);
+        }
+
+        match lowers.get(cursor).map(String::as_str) {
+            Some(",") => cursor += 1,
+            Some(_) | None => return None,
+        }
+    }
+}
+
+fn token_end((pos, token): &(usize, String)) -> usize {
+    pos + token.len()
+}
+
+fn cte_body_write_kind(sql: &str) -> Option<StatementKind> {
+    let kind = classify(sql);
+    match kind {
+        StatementKind::Insert | StatementKind::Update { .. } | StatementKind::Delete { .. } => {
+            Some(kind)
+        }
+        StatementKind::Unsupported
+            if first_keyword(sql)
+                .as_deref()
+                .is_some_and(|keyword| keyword.eq_ignore_ascii_case("MERGE")) =>
+        {
+            Some(StatementKind::Unsupported)
+        }
+        _ => None,
+    }
+}
+
+fn cte_body_sql<'a>(
+    sql: &'a str,
+    chars: &[(usize, char)],
+    start_byte: usize,
+    end_byte: usize,
+) -> Option<&'a str> {
+    let mut cursor = chars
+        .iter()
+        .position(|(byte_pos, _)| *byte_pos >= start_byte)?;
+    while cursor < chars.len() && chars[cursor].0 < end_byte {
+        let (byte_pos, ch) = chars[cursor];
+        if ch.is_whitespace() {
+            cursor += 1;
+            continue;
+        }
+        if let Some(next) = skip_line_comment(chars, cursor, ch) {
+            cursor = next;
+            continue;
+        }
+        if let Some(next) = skip_block_comment(chars, cursor, ch) {
+            cursor = next;
+            continue;
+        }
+        if ch != '(' {
+            return None;
+        }
+        let close = matching_close_paren(sql, chars, cursor, end_byte)?;
+        return Some(&sql[byte_pos + ch.len_utf8()..chars[close].0]);
+    }
+    None
+}
+
+fn matching_close_paren(
+    sql: &str,
+    chars: &[(usize, char)],
+    open: usize,
+    end_byte: usize,
+) -> Option<usize> {
+    let mut cursor = open;
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    while cursor < chars.len() && chars[cursor].0 < end_byte {
+        let (byte_pos, ch) = chars[cursor];
+        if let Some(next) = skip_line_comment(chars, cursor, ch) {
+            cursor = next;
+            continue;
+        }
+        if let Some(next) = skip_block_comment(chars, cursor, ch) {
+            cursor = next;
+            continue;
+        }
+        if let Some(next) = advance_single_quote(chars, cursor, ch, &mut in_string) {
+            cursor = next;
+            continue;
+        }
+        if in_string {
+            cursor += 1;
+            continue;
+        }
+        if let Some(next) = skip_double_quoted_identifier(chars, cursor, ch) {
+            cursor = next;
+            continue;
+        }
+        if let Some(next) = skip_dollar_quoted_string(sql, chars, cursor, byte_pos, ch) {
+            cursor = next;
+            continue;
+        }
+
+        update_parentheses_depth(ch, &mut depth);
+        if depth == 0 {
+            return Some(cursor);
+        }
+        cursor += 1;
+    }
+    None
+}
+
 pub fn extract_target_name(sql: &str, kind: &StatementKind) -> Option<String> {
-    let original_trimmed = sql.trim();
+    let original_trimmed = statement_after_leading_ctes(sql);
     // Avoids byte-length mismatch when Unicode identifiers change size under case folding.
     let chars: Vec<(usize, char)> = original_trimmed.char_indices().collect();
 
@@ -192,70 +347,9 @@ pub fn extract_target_name(sql: &str, kind: &StatementKind) -> Option<String> {
     }
 }
 
-pub(crate) fn skip_line_comment(chars: &[(usize, char)], i: usize, ch: char) -> Option<usize> {
-    if ch != '-' || !next_char_is(chars, i, '-') {
-        return None;
-    }
-    let mut cursor = i;
-    while cursor < chars.len() && chars[cursor].1 != '\n' {
-        cursor += 1;
-    }
-    Some(cursor)
-}
-
-pub(crate) fn skip_block_comment(chars: &[(usize, char)], i: usize, ch: char) -> Option<usize> {
-    if ch != '/' || !next_char_is(chars, i, '*') {
-        return None;
-    }
-    let mut cursor = i + 2;
-    while cursor + 1 < chars.len() && !(chars[cursor].1 == '*' && chars[cursor + 1].1 == '/') {
-        cursor += 1;
-    }
-    Some(cursor + 2)
-}
-
-pub(crate) fn advance_single_quote(
-    chars: &[(usize, char)],
-    i: usize,
-    ch: char,
-    in_string: &mut bool,
-) -> Option<usize> {
-    if ch != '\'' {
-        return None;
-    }
-    if *in_string {
-        if next_char_is(chars, i, '\'') {
-            return Some(i + 2);
-        }
-        *in_string = false;
-    } else {
-        *in_string = true;
-    }
-    Some(i + 1)
-}
-
-pub(crate) fn skip_double_quoted_identifier(
-    chars: &[(usize, char)],
-    i: usize,
-    ch: char,
-) -> Option<usize> {
-    if ch != '"' {
-        return None;
-    }
-    let mut cursor = i + 1;
-    while cursor < chars.len() {
-        if chars[cursor].1 == '"' {
-            if next_char_is(chars, cursor, '"') {
-                cursor += 2;
-            } else {
-                cursor += 1;
-                break;
-            }
-        } else {
-            cursor += 1;
-        }
-    }
-    Some(cursor)
+fn skip_quoted_identifier(chars: &[(usize, char)], i: usize, ch: char) -> Option<usize> {
+    skip_double_quoted_identifier(chars, i, ch)
+        .or_else(|| skip_sqlite_quoted_identifier(chars, i, ch))
 }
 
 pub(crate) fn skip_dollar_quoted_string(
@@ -302,10 +396,6 @@ pub(crate) fn update_parentheses_depth(ch: char, depth: &mut i32) {
     }
 }
 
-pub(crate) fn next_char_is(chars: &[(usize, char)], i: usize, expected: char) -> bool {
-    i + 1 < chars.len() && chars[i + 1].1 == expected
-}
-
 fn is_word_start(chars: &[(usize, char)], i: usize) -> bool {
     if i == 0 {
         return true;
@@ -328,7 +418,6 @@ fn classify_inner(lower: &str, chars: &[(usize, char)]) -> StatementKind {
     let mut i = 0;
     let mut depth: i32 = 0;
     let mut in_string = false;
-    let mut in_cte = false;
     let mut is_explain = false;
     let mut has_analyze = false;
     let mut kind: Option<StatementKind> = None;
@@ -352,7 +441,7 @@ fn classify_inner(lower: &str, chars: &[(usize, char)]) -> StatementKind {
             i += 1;
             continue;
         }
-        if let Some(next_i) = skip_double_quoted_identifier(chars, i, ch) {
+        if let Some(next_i) = skip_quoted_identifier(chars, i, ch) {
             i = next_i;
             continue;
         }
@@ -415,15 +504,7 @@ fn classify_inner(lower: &str, chars: &[(usize, char)]) -> StatementKind {
                 return StatementKind::Other;
             }
 
-            if kind.is_none() && is_keyword(rest, "with") {
-                in_cte = true;
-                i += 1;
-                continue;
-            }
-
-            // CTE: keep overriding with each top-level keyword (last one wins).
-            // Non-CTE: first keyword determines the kind.
-            if in_cte || kind.is_none() {
+            if kind.is_none() {
                 if let Some(k) = match_keyword(rest) {
                     kind = Some(k);
                     if matches!(
@@ -437,7 +518,7 @@ fn classify_inner(lower: &str, chars: &[(usize, char)]) -> StatementKind {
                             other => other,
                         });
                     }
-                } else if !in_cte {
+                } else {
                     kind = Some(StatementKind::Unsupported);
                 }
             }
@@ -512,7 +593,7 @@ fn scan_for_where(lower: &str, chars: &[(usize, char)], start: usize) -> bool {
             i += 1;
             continue;
         }
-        if let Some(next_i) = skip_double_quoted_identifier(chars, i, ch) {
+        if let Some(next_i) = skip_quoted_identifier(chars, i, ch) {
             i = next_i;
             continue;
         }
@@ -542,7 +623,10 @@ fn has_non_whitespace_after(lower: &str, byte_pos: usize) -> bool {
         .is_some_and(|tail| !tail.trim().is_empty())
 }
 
-fn collect_top_level_tokens(original: &str, chars: &[(usize, char)]) -> Vec<(usize, String)> {
+pub(crate) fn collect_top_level_tokens(
+    original: &str,
+    chars: &[(usize, char)],
+) -> Vec<(usize, String)> {
     let mut tokens = Vec::new();
     let mut i = 0;
     let mut depth: i32 = 0;
@@ -568,9 +652,9 @@ fn collect_top_level_tokens(original: &str, chars: &[(usize, char)]) -> Vec<(usi
             continue;
         }
 
-        if ch == '"' {
+        if matches!(ch, '"' | '`' | '[') {
             let start_i = i;
-            if let Some(next_i) = skip_double_quoted_identifier(chars, i, ch) {
+            if let Some(next_i) = skip_quoted_identifier(chars, i, ch) {
                 if depth == 0 {
                     let start_byte = chars[start_i].0;
                     let end_byte = if next_i < chars.len() {
@@ -622,8 +706,8 @@ fn collect_top_level_tokens(original: &str, chars: &[(usize, char)]) -> Vec<(usi
             i += 1;
             if i < chars.len() {
                 let (next_byte, next_ch) = chars[i];
-                if next_ch == '"' {
-                    if let Some(next_i) = skip_double_quoted_identifier(chars, i, next_ch) {
+                if matches!(next_ch, '"' | '`' | '[') {
+                    if let Some(next_i) = skip_quoted_identifier(chars, i, next_ch) {
                         let end_byte = if next_i < chars.len() {
                             chars[next_i].0
                         } else {
@@ -659,7 +743,7 @@ fn collect_top_level_tokens(original: &str, chars: &[(usize, char)]) -> Vec<(usi
     tokens
 }
 
-fn unquote_simple(name: &str) -> String {
+pub(crate) fn unquote_simple(name: &str) -> String {
     if let Some(dot_pos) = find_unquoted_dot(name) {
         let schema = &name[..dot_pos];
         let table = &name[dot_pos + 1..];
@@ -671,13 +755,18 @@ fn unquote_simple(name: &str) -> String {
 }
 
 fn find_unquoted_dot(name: &str) -> Option<usize> {
-    let mut in_quote = false;
-    for (i, ch) in name.char_indices() {
-        if ch == '"' {
-            in_quote = !in_quote;
-        } else if ch == '.' && !in_quote {
-            return Some(i);
+    let chars: Vec<(usize, char)> = name.char_indices().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let (byte_pos, ch) = chars[i];
+        if let Some(next_i) = skip_quoted_identifier(&chars, i, ch) {
+            i = next_i;
+            continue;
         }
+        if ch == '.' {
+            return Some(byte_pos);
+        }
+        i += 1;
     }
     None
 }
@@ -685,6 +774,10 @@ fn find_unquoted_dot(name: &str) -> Option<usize> {
 fn unquote_single_ident(s: &str) -> String {
     if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
         s[1..s.len() - 1].replace("\"\"", "\"")
+    } else if s.starts_with('`') && s.ends_with('`') && s.len() >= 2 {
+        s[1..s.len() - 1].replace("``", "`")
+    } else if s.starts_with('[') && s.ends_with(']') && s.len() >= 2 {
+        s[1..s.len() - 1].to_string()
     } else {
         s.to_string()
     }
@@ -843,6 +936,10 @@ mod tests {
         #[case::explain_costs_off("EXPLAIN COSTS OFF SELECT * FROM users", StatementKind::Select)]
         #[case::explain_update("EXPLAIN UPDATE users SET x = 1", StatementKind::Select)]
         #[case::explain_delete("EXPLAIN DELETE FROM users", StatementKind::Select)]
+        #[case::explain_cte_update(
+            "EXPLAIN WITH changed AS (UPDATE users SET x = 1 RETURNING *) SELECT * FROM changed",
+            StatementKind::Select
+        )]
         #[case::explain_merge(
             "EXPLAIN MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET x = 1",
             StatementKind::Select
@@ -874,6 +971,10 @@ mod tests {
             "EXPLAIN ANALYZE INSERT INTO users VALUES (1)",
             StatementKind::Insert
         )]
+        #[case::explain_analyze_cte_update(
+            "EXPLAIN ANALYZE WITH changed AS (UPDATE users SET x = 1 RETURNING *) SELECT * FROM changed",
+            StatementKind::Update { has_where: false }
+        )]
         #[case::explain_paren_analyze_update(
             "EXPLAIN (ANALYZE) UPDATE users SET x = 1",
             StatementKind::Update { has_where: false }
@@ -887,6 +988,14 @@ mod tests {
         }
 
         #[rstest]
+        #[case::cte_insert(
+            "WITH cte AS (SELECT 1) INSERT INTO users(id) SELECT * FROM cte",
+            StatementKind::Insert
+        )]
+        #[case::multiple_cte_insert(
+            "WITH a AS (SELECT 1), b AS (SELECT 2) INSERT INTO users(id) SELECT * FROM a",
+            StatementKind::Insert
+        )]
         #[case::cte_update(
             "WITH cte AS (SELECT 1) UPDATE users SET name = 'x'",
             StatementKind::Update { has_where: false }
@@ -898,6 +1007,30 @@ mod tests {
         #[case::cte_delete_where(
             "WITH cte AS (SELECT 1) DELETE FROM users WHERE id = 1",
             StatementKind::Delete { has_where: true }
+        )]
+        #[case::cte_body_update(
+            "WITH x AS (UPDATE users SET name='a' RETURNING *) SELECT * FROM x",
+            StatementKind::Update { has_where: false }
+        )]
+        #[case::cte_body_update_where(
+            "WITH x AS (UPDATE users SET name='a' WHERE id = 1 RETURNING *) SELECT * FROM x",
+            StatementKind::Update { has_where: true }
+        )]
+        #[case::cte_body_delete(
+            "WITH x AS (DELETE FROM users RETURNING *) SELECT * FROM x",
+            StatementKind::Delete { has_where: false }
+        )]
+        #[case::cte_body_insert(
+            "WITH x AS (INSERT INTO users(id) VALUES (1) RETURNING *) SELECT * FROM x",
+            StatementKind::Insert
+        )]
+        #[case::second_cte_body_update(
+            "WITH a AS (SELECT 1), x AS (UPDATE users SET name='a' RETURNING *) SELECT * FROM x",
+            StatementKind::Update { has_where: false }
+        )]
+        #[case::cte_body_merge(
+            "WITH x AS (MERGE INTO users USING incoming ON users.id = incoming.id WHEN MATCHED THEN UPDATE SET name = incoming.name RETURNING *) SELECT * FROM x",
+            StatementKind::Unsupported
         )]
         fn cte_dml(#[case] sql: &str, #[case] expected: StatementKind) {
             assert_eq!(classify(sql), expected);
@@ -1003,7 +1136,7 @@ mod tests {
         #[case::double_quoted_escaped("SELECT \"up\"\"date\" FROM t", StatementKind::Select)]
         #[case::cte_with_update_in_subquery(
             "WITH x AS (UPDATE users SET name='a' RETURNING *) SELECT * FROM x",
-            StatementKind::Select
+            StatementKind::Update { has_where: false }
         )]
         #[case::select_with_parenthesized_expr(
             "WITH cte AS (SELECT 1) SELECT (1+2)",
@@ -1153,6 +1286,31 @@ mod tests {
             "UPDATE \"public\".\"MyTable\" SET x = 1",
             StatementKind::Update { has_where: false },
             Some("public.MyTable")
+        )]
+        #[case::delete_backtick_quoted(
+            "DELETE FROM `my table`",
+            StatementKind::Delete { has_where: false },
+            Some("my table")
+        )]
+        #[case::update_bracket_quoted(
+            "UPDATE [select] SET x = 1",
+            StatementKind::Update { has_where: false },
+            Some("select")
+        )]
+        #[case::drop_table_backtick_qualified(
+            "DROP TABLE main.`my.table`",
+            StatementKind::Drop,
+            Some("main.my.table")
+        )]
+        #[case::drop_table_bracket_quoted_dot(
+            "DROP TABLE [main.users]",
+            StatementKind::Drop,
+            Some("main.users")
+        )]
+        #[case::drop_table_bracket_multiple(
+            "DROP TABLE [main.users], other",
+            StatementKind::Drop,
+            None
         )]
         #[case::drop_index("DROP INDEX my_index", StatementKind::Drop, Some("my_index"))]
         #[case::drop_index_if_exists(

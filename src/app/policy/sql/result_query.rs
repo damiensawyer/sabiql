@@ -1,8 +1,7 @@
 use super::statement_classifier::{self, StatementKind};
 
-pub fn is_rerunnable_select(sql: &str) -> bool {
+pub(crate) fn is_rerunnable_select(sql: &str) -> bool {
     matches!(statement_classifier::classify(sql), StatementKind::Select)
-        && !statement_classifier::has_executed_data_modifying_cte(sql)
 }
 
 #[cfg(test)]

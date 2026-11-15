@@ -8,33 +8,12 @@ pub struct TextInputState {
     viewport_offset: usize,
 }
 
-pub trait TextInputLike {
-    fn text_input(&self) -> &TextInputState;
-
-    fn content(&self) -> &str {
-        self.text_input().content()
-    }
-
-    fn cursor(&self) -> usize {
-        self.text_input().cursor()
-    }
-
-    fn char_count(&self) -> usize {
-        self.text_input().char_count()
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextKillDirection {
     ToLineEnd,
     ToLineStart,
     ReadlineWordEnd,
     ReadlinePreviousWhitespace,
-}
-
-pub trait TextInputEditing {
-    fn kill(&mut self, direction: TextKillDirection) -> String;
-    fn yank(&mut self, text: &str);
 }
 
 impl TextInputState {
@@ -140,6 +119,19 @@ impl TextInputState {
         )
     }
 
+    pub fn kill(&mut self, direction: TextKillDirection) -> String {
+        match direction {
+            TextKillDirection::ToLineEnd => self.kill_to_line_end(),
+            TextKillDirection::ToLineStart => self.kill_to_line_start(),
+            TextKillDirection::ReadlineWordEnd => self.kill_next_word(),
+            TextKillDirection::ReadlinePreviousWhitespace => self.kill_previous_word(),
+        }
+    }
+
+    pub fn yank(&mut self, text: &str) {
+        self.insert_str(text);
+    }
+
     pub fn move_cursor(&mut self, movement: CursorMove) {
         match movement {
             CursorMove::Left => {
@@ -226,7 +218,7 @@ impl TextInputState {
         self.char_count
     }
 
-    pub(crate) fn remove_range(&mut self, start: usize, end: usize) -> String {
+    pub(super) fn remove_range(&mut self, start: usize, end: usize) -> String {
         let start = start.min(self.char_count);
         let end = end.min(self.char_count);
         if start >= end {
@@ -244,28 +236,7 @@ impl TextInputState {
     }
 }
 
-impl TextInputLike for TextInputState {
-    fn text_input(&self) -> &TextInputState {
-        self
-    }
-}
-
-impl TextInputEditing for TextInputState {
-    fn kill(&mut self, direction: TextKillDirection) -> String {
-        match direction {
-            TextKillDirection::ToLineEnd => self.kill_to_line_end(),
-            TextKillDirection::ToLineStart => self.kill_to_line_start(),
-            TextKillDirection::ReadlineWordEnd => self.kill_next_word(),
-            TextKillDirection::ReadlinePreviousWhitespace => self.kill_previous_word(),
-        }
-    }
-
-    fn yank(&mut self, text: &str) {
-        self.insert_str(text);
-    }
-}
-
-fn char_to_byte_index(s: &str, char_idx: usize) -> usize {
+pub(crate) fn char_to_byte_index(s: &str, char_idx: usize) -> usize {
     s.char_indices()
         .nth(char_idx)
         .map_or(s.len(), |(byte_idx, _)| byte_idx)

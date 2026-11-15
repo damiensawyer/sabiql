@@ -8,49 +8,40 @@ mod tabs;
 use std::time::Instant;
 
 use crate::model::app_state::AppState;
-use crate::services::AppServices;
 use crate::update::action::Action;
 use crate::update::dispatch_result::DispatchResult;
 
-pub fn dispatch_explain(
+pub(in crate::update) fn dispatch_explain(
     state: &mut AppState,
     action: &Action,
     now: Instant,
-    services: &AppServices,
 ) -> DispatchResult {
-    request::reduce_request(state, action, now, services)
-        .or_else(|| analyze::reduce_analyze(state, action, now, services))
-        .or_else(|| output::reduce_output(state, action, now))
-        .or_else(|| scroll::reduce_scroll(state, action, now))
-        .or_else(|| tabs::reduce_tabs(state, action, now, services))
-}
-
-#[cfg(test)]
-fn reduce_explain_with_services(
-    state: &mut AppState,
-    action: &Action,
-    now: Instant,
-    services: &AppServices,
-) -> DispatchResult {
-    dispatch_explain(state, action, now, services)
-}
-
-#[cfg(test)]
-fn reduce_explain(state: &mut AppState, action: &Action, now: Instant) -> DispatchResult {
-    dispatch_explain(state, action, now, &crate::services::AppServices::stub())
+    request::reduce_request(state, action, now)
+        .or_else(|| analyze::reduce_analyze(state, action, now))
+        .or_else(|| output::reduce_output(state, action))
+        .or_else(|| scroll::reduce_scroll(state, action))
+        .or_else(|| tabs::reduce_tabs(state, action))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cmd::effect::Effect;
-    use crate::model::shared::db_capabilities::DbCapabilities;
+    use crate::domain::DatabaseType;
+    use crate::model::browse::query_execution::PostDeleteRowSelection;
     use crate::model::shared::input_mode::InputMode;
-    use crate::model::shared::inspector_tab::InspectorTab;
     use crate::model::sql_editor::modal::{SqlModalStatus, SqlModalTab};
+    use crate::policy::write::sql_risk::AcknowledgeReason;
+    use crate::ports::outbound::AccessMode;
     use crate::services::AppServices;
     use crate::update::action::{ScrollAmount, ScrollDirection, ScrollTarget};
+    use crate::update::reducer::reduce;
+    use crate::update::test_fixtures;
     use std::time::Instant;
+
+    fn reduce_explain(state: &mut AppState, action: &Action, now: Instant) -> DispatchResult {
+        dispatch_explain(state, action, now)
+    }
 
     fn sql_modal_state() -> AppState {
         let mut state = AppState::new("test".to_string());
@@ -58,10 +49,16 @@ mod tests {
         state
     }
 
-    fn services_without_explain() -> AppServices {
-        let mut services = AppServices::stub();
-        services.db_capabilities = DbCapabilities::new(false, vec![InspectorTab::Info]);
-        services
+    fn activate_postgres_connection(state: &mut AppState) {
+        test_fixtures::activate_postgres_connection(state, "dsn://test");
+    }
+
+    fn activate_sqlite_connection(state: &mut AppState) {
+        test_fixtures::activate_sqlite_connection(state, "sqlite:///tmp/app.db");
+    }
+
+    fn reduce_at_boundary(state: &mut AppState, action: Action) -> Vec<Effect> {
+        reduce(state, action, Instant::now(), &AppServices::stub())
     }
 
     mod explain_request {
@@ -71,7 +68,7 @@ mod tests {
         fn empty_query_is_noop() {
             let mut state = sql_modal_state();
             state.sql_modal.editor.set_content("  ".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
 
             let effects = reduce_explain(&mut state, &Action::ExplainRequest, Instant::now())
                 .into_effects()
@@ -96,8 +93,8 @@ mod tests {
         fn running_is_noop() {
             let mut state = sql_modal_state();
             state.sql_modal.editor.set_content("SELECT 1".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
-            state.sql_modal.set_status_for_test(SqlModalStatus::Running);
+            activate_postgres_connection(&mut state);
+            state.sql_modal.begin_adhoc_running();
 
             let effects = reduce_explain(&mut state, &Action::ExplainRequest, Instant::now())
                 .into_effects()
@@ -107,25 +104,296 @@ mod tests {
         }
 
         #[test]
-        fn unsupported_database_sets_error_without_effects() {
+        fn disconnected_session_sets_error_without_effects() {
             let mut state = sql_modal_state();
             state.sql_modal.editor.set_content("SELECT 1".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
 
-            let effects = reduce_explain_with_services(
-                &mut state,
-                &Action::ExplainRequest,
-                Instant::now(),
-                &services_without_explain(),
-            )
-            .unwrap();
+            let effects = reduce_at_boundary(&mut state, Action::ExplainRequest);
+
+            assert!(effects.is_empty());
+            assert!(state.explain.error().is_none());
+            assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Sql);
+        }
+
+        #[test]
+        fn sqlite_connection_emits_execute_explain_query_plan_effect() {
+            let mut state = sql_modal_state();
+            state.sql_modal.editor.set_content("SELECT 1".to_string());
+            activate_sqlite_connection(&mut state);
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainRequest, Instant::now()).unwrap();
+
+            assert_eq!(effects.len(), 1);
+            assert!(matches!(
+                &effects[0],
+                Effect::ExecuteExplain {
+                    query,
+                    is_analyze: false,
+                    access_mode: AccessMode::ReadOnly,
+                    ..
+                } if query == "EXPLAIN QUERY PLAN SELECT 1"
+            ));
+            assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Plan);
+        }
+
+        #[test]
+        fn sqlite_dml_emits_execute_explain_query_plan_effect_without_confirmation() {
+            let mut state = sql_modal_state();
+            state
+                .sql_modal
+                .editor
+                .set_content("DELETE FROM users".to_string());
+            activate_sqlite_connection(&mut state);
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainRequest, Instant::now()).unwrap();
+
+            assert_eq!(effects.len(), 1);
+            assert!(matches!(
+                &effects[0],
+                Effect::ExecuteExplain {
+                    query,
+                    is_analyze: false,
+                    access_mode: AccessMode::ReadOnly,
+                    ..
+                } if query == "EXPLAIN QUERY PLAN DELETE FROM users"
+            ));
+            assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Plan);
+            assert!(!matches!(
+                state.sql_modal.status(),
+                SqlModalStatus::ConfirmingAnalyzeHigh { .. }
+                    | SqlModalStatus::ConfirmingAnalyzeRisk { .. }
+            ));
+        }
+
+        #[test]
+        fn mysql_select_emits_tree_explain_effect_and_enables_compare() {
+            let mut state = sql_modal_state();
+            state.sql_modal.editor.set_content("SELECT 1".to_string());
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainRequest, Instant::now()).unwrap();
+
+            assert!(matches!(
+                &effects[0],
+                Effect::ExecuteExplain {
+                    query,
+                    database_type: DatabaseType::MySQL,
+                    is_analyze: false,
+                    access_mode: AccessMode::ReadOnly,
+                    ..
+                } if query == "EXPLAIN FORMAT=TREE SELECT 1"
+            ));
+            assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Plan);
+            assert!(
+                state
+                    .session
+                    .active_engine_feature_profile()
+                    .supports_explain_analyze()
+            );
+            assert!(
+                state
+                    .session
+                    .active_engine_feature_profile()
+                    .supports_plan_comparison()
+            );
+        }
+
+        #[test]
+        fn mysql_dml_emits_tree_explain_without_running_the_statement() {
+            let mut state = sql_modal_state();
+            state
+                .sql_modal
+                .editor
+                .set_content("UPDATE users SET active = TRUE".to_string());
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainRequest, Instant::now()).unwrap();
+
+            assert!(matches!(
+                &effects[0],
+                Effect::ExecuteExplain {
+                    query,
+                    database_type: DatabaseType::MySQL,
+                    is_analyze: false,
+                    access_mode: AccessMode::ReadOnly,
+                    ..
+                } if query == "EXPLAIN FORMAT=TREE UPDATE users SET active = TRUE"
+            ));
+        }
+
+        #[test]
+        fn mysql_replace_emits_tree_explain_without_running_the_statement() {
+            let mut state = sql_modal_state();
+            state
+                .sql_modal
+                .editor
+                .set_content("REPLACE INTO users (id, active) VALUES (1, TRUE)".to_string());
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainRequest, Instant::now()).unwrap();
+
+            assert!(matches!(
+                &effects[0],
+                Effect::ExecuteExplain {
+                    query,
+                    database_type: DatabaseType::MySQL,
+                    is_analyze: false,
+                    access_mode: AccessMode::ReadOnly,
+                    ..
+                } if query == "EXPLAIN FORMAT=TREE REPLACE INTO users (id, active) VALUES (1, TRUE)"
+            ));
+        }
+
+        #[test]
+        fn mysql_explain_emits_tree_explain_for_locking_reads() {
+            let mut state = sql_modal_state();
+            state
+                .sql_modal
+                .editor
+                .set_content("SELECT * FROM users FOR UPDATE".to_string());
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainRequest, Instant::now()).unwrap();
+
+            assert!(matches!(
+                &effects[0],
+                Effect::ExecuteExplain {
+                    query,
+                    database_type: DatabaseType::MySQL,
+                    is_analyze: false,
+                    access_mode: AccessMode::ReadOnly,
+                    ..
+                } if query == "EXPLAIN FORMAT=TREE SELECT * FROM users FOR UPDATE"
+            ));
+        }
+
+        #[test]
+        fn mysql_ddl_reports_supported_statement_boundary() {
+            let mut state = sql_modal_state();
+            state
+                .sql_modal
+                .editor
+                .set_content("CREATE TABLE users(id INT)".to_string());
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainRequest, Instant::now()).unwrap();
 
             assert!(effects.is_empty());
             assert_eq!(
-                state.explain.error.as_deref(),
-                Some("EXPLAIN is unavailable for this database")
+                state.explain.error(),
+                Some(
+                    "MySQL EXPLAIN supports SELECT, TABLE, INSERT, REPLACE, UPDATE, or DELETE statements",
+                )
             );
+        }
+
+        #[test]
+        fn mysql_client_command_reports_client_command_boundary() {
+            let mut state = sql_modal_state();
+            state
+                .sql_modal
+                .editor
+                .set_content("\\C /tmp/other.sock".to_string());
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainRequest, Instant::now()).unwrap();
+
+            assert!(effects.is_empty());
+            assert_eq!(
+                state.explain.error(),
+                Some("MySQL EXPLAIN does not support MySQL client commands")
+            );
+        }
+
+        #[test]
+        fn mysql_multiple_statements_reports_statement_boundary() {
+            let mut state = sql_modal_state();
+            state
+                .sql_modal
+                .editor
+                .set_content("SELECT 1; SELECT 2".to_string());
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainRequest, Instant::now()).unwrap();
+
+            assert!(effects.is_empty());
+            assert_eq!(
+                state.explain.error(),
+                Some("MySQL EXPLAIN does not support multiple statements")
+            );
+        }
+
+        #[test]
+        fn sqlite_ddl_sets_query_plan_error_on_plan_tab() {
+            let mut state = sql_modal_state();
+            state
+                .sql_modal
+                .editor
+                .set_content("CREATE TABLE users(id INTEGER)".to_string());
+            activate_sqlite_connection(&mut state);
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainRequest, Instant::now()).unwrap();
+
+            assert!(effects.is_empty());
+            assert_eq!(
+                state.explain.error(),
+                Some(
+                    "EXPLAIN QUERY PLAN supports SELECT, INSERT, UPDATE, DELETE, or REPLACE statements"
+                )
+            );
+            assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Plan);
+        }
+
+        #[test]
+        fn sqlite_explain_prefixed_query_sets_prefix_specific_error() {
+            let mut state = sql_modal_state();
+            state
+                .sql_modal
+                .editor
+                .set_content("EXPLAIN SELECT 1".to_string());
+            activate_sqlite_connection(&mut state);
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainRequest, Instant::now()).unwrap();
+
+            assert!(effects.is_empty());
+            assert_eq!(
+                state.explain.error(),
+                Some(
+                    "EXPLAIN QUERY PLAN is added automatically; enter a supported query without EXPLAIN"
+                )
+            );
+        }
+
+        #[test]
+        fn sqlite_explain_analyze_request_stops_before_confirmation() {
+            let mut state = sql_modal_state();
+            state
+                .sql_modal
+                .editor
+                .set_content("DELETE FROM users".to_string());
+            activate_sqlite_connection(&mut state);
+
+            let effects = reduce_at_boundary(&mut state, Action::ExplainAnalyzeRequest);
+
+            assert!(effects.is_empty());
+            assert!(state.explain.error().is_none());
             assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Sql);
+            assert!(!matches!(
+                state.sql_modal.status(),
+                SqlModalStatus::ConfirmingAnalyzeHigh { .. }
+                    | SqlModalStatus::ConfirmingAnalyzeRisk { .. }
+            ));
         }
 
         #[test]
@@ -135,7 +403,7 @@ mod tests {
                 .sql_modal
                 .editor
                 .set_content("SELECT 1; DELETE FROM users".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
 
             let effects = reduce_explain(&mut state, &Action::ExplainRequest, Instant::now())
                 .into_effects()
@@ -143,7 +411,7 @@ mod tests {
 
             assert!(effects.is_empty());
             assert_eq!(
-                state.explain.error.as_deref(),
+                state.explain.error(),
                 Some("EXPLAIN does not support multiple statements")
             );
             assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Plan);
@@ -153,7 +421,7 @@ mod tests {
         fn starts_query_timer() {
             let mut state = sql_modal_state();
             state.sql_modal.editor.set_content("SELECT 1".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
 
             reduce_explain(&mut state, &Action::ExplainRequest, Instant::now());
 
@@ -162,14 +430,18 @@ mod tests {
         }
 
         #[test]
-        fn emits_execute_explain_effect() {
-            let mut state = sql_modal_state();
+        fn delete_success_then_explain_then_preview_completion_clears_selection() {
+            let mut state = test_fixtures::state_after_delete_success();
+            state.modal.set_mode(InputMode::SqlModal);
             state.sql_modal.editor.set_content("SELECT 1".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
+            let now = Instant::now();
 
-            let effects = reduce_explain(&mut state, &Action::ExplainRequest, Instant::now())
-                .into_effects()
-                .expect("reducer should handle action");
+            let effects = reduce(
+                &mut state,
+                Action::ExplainRequest,
+                now,
+                &AppServices::stub(),
+            );
 
             assert_eq!(effects.len(), 1);
             assert!(matches!(
@@ -177,12 +449,19 @@ mod tests {
                 Effect::ExecuteExplain {
                     query,
                     is_analyze: false,
-                    read_only: true,
+                    access_mode: AccessMode::ReadOnly,
                     ..
                 } if query == "EXPLAIN SELECT 1"
             ));
             assert_eq!(*state.sql_modal.status(), SqlModalStatus::Running);
             assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Plan);
+            assert_eq!(
+                state.query.post_delete_row_selection(),
+                PostDeleteRowSelection::Keep
+            );
+            test_fixtures::complete_table_preview(&mut state, now);
+            assert!(state.result_interaction.selection().row().is_none());
+            assert!(state.result_interaction.selection().cell().is_none());
         }
     }
 
@@ -192,7 +471,7 @@ mod tests {
         #[test]
         fn empty_query_is_noop() {
             let mut state = sql_modal_state();
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
 
             let effects =
                 reduce_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now())
@@ -209,7 +488,7 @@ mod tests {
                 .sql_modal
                 .editor
                 .set_content("SELECT 1; DELETE FROM users".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
 
             let effects =
                 reduce_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now())
@@ -218,7 +497,7 @@ mod tests {
 
             assert!(effects.is_empty());
             assert_eq!(
-                state.explain.error.as_deref(),
+                state.explain.error(),
                 Some("EXPLAIN ANALYZE does not support multiple statements")
             );
             assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Plan);
@@ -226,24 +505,14 @@ mod tests {
         }
 
         #[test]
-        fn unsupported_database_sets_error_without_effects() {
+        fn disconnected_session_sets_error_without_effects() {
             let mut state = sql_modal_state();
             state.sql_modal.editor.set_content("SELECT 1".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
 
-            let effects = reduce_explain_with_services(
-                &mut state,
-                &Action::ExplainAnalyzeRequest,
-                Instant::now(),
-                &services_without_explain(),
-            )
-            .unwrap();
+            let effects = reduce_at_boundary(&mut state, Action::ExplainAnalyzeRequest);
 
             assert!(effects.is_empty());
-            assert_eq!(
-                state.explain.error.as_deref(),
-                Some("EXPLAIN is unavailable for this database")
-            );
+            assert!(state.explain.error().is_none());
             assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Sql);
         }
 
@@ -251,7 +520,7 @@ mod tests {
         fn select_executes_immediately_without_confirm() {
             let mut state = sql_modal_state();
             state.sql_modal.editor.set_content("SELECT 1".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
 
             let effects =
                 reduce_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now())
@@ -270,13 +539,98 @@ mod tests {
         }
 
         #[test]
+        fn mysql_select_requires_execution_confirmation() {
+            let mut state = sql_modal_state();
+            state.sql_modal.editor.set_content("SELECT 1".to_string());
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now())
+                    .unwrap();
+
+            assert!(effects.is_empty());
+            assert!(matches!(
+                state.sql_modal.status(),
+                SqlModalStatus::ConfirmingAnalyzeRisk {
+                    query,
+                    reason: AcknowledgeReason::AnalyzeExecution,
+                } if query == "SELECT 1"
+            ));
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainAnalyzeConfirm, Instant::now())
+                    .unwrap();
+
+            assert!(matches!(
+                &effects[0],
+                Effect::ExecuteExplain {
+                    query,
+                    database_type: DatabaseType::MySQL,
+                    is_analyze: true,
+                    access_mode: AccessMode::ReadOnly,
+                    ..
+                } if query == "EXPLAIN ANALYZE FORMAT=TREE SELECT 1"
+            ));
+        }
+
+        #[test]
+        fn mysql_table_requires_execution_confirmation() {
+            let mut state = sql_modal_state();
+            state
+                .sql_modal
+                .editor
+                .set_content("TABLE items".to_string());
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now())
+                    .unwrap();
+
+            assert!(effects.is_empty());
+            assert!(matches!(
+                state.sql_modal.status(),
+                SqlModalStatus::ConfirmingAnalyzeRisk {
+                    query,
+                    reason: AcknowledgeReason::AnalyzeExecution,
+                } if query == "TABLE items"
+            ));
+        }
+
+        #[test]
+        fn mysql_write_analyze_is_rejected_before_confirmation() {
+            let mut state = sql_modal_state();
+            state
+                .sql_modal
+                .editor
+                .set_content("UPDATE items SET value = 1".to_string());
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now())
+                    .unwrap();
+
+            assert!(effects.is_empty());
+            assert_eq!(
+                state.explain.error(),
+                Some(
+                    "MySQL EXPLAIN ANALYZE only supports side-effect-free SELECT or TABLE statements"
+                )
+            );
+            assert!(!matches!(
+                state.sql_modal.status(),
+                SqlModalStatus::ConfirmingAnalyzeHigh { .. }
+                    | SqlModalStatus::ConfirmingAnalyzeRisk { .. }
+            ));
+        }
+
+        #[test]
         fn insert_executes_immediately() {
             let mut state = sql_modal_state();
             state
                 .sql_modal
                 .editor
                 .set_content("INSERT INTO users VALUES (1)".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
 
             let effects =
                 reduce_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now())
@@ -301,7 +655,7 @@ mod tests {
                 .sql_modal
                 .editor
                 .set_content("UPDATE users SET name='x' WHERE id=1".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
 
             let effects =
                 reduce_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now())
@@ -326,7 +680,7 @@ mod tests {
                 .sql_modal
                 .editor
                 .set_content("DELETE FROM users".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
 
             reduce_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now());
 
@@ -343,7 +697,7 @@ mod tests {
             state.sql_modal.editor.set_content(
                 "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE".to_string(),
             );
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
 
             reduce_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now());
 
@@ -363,7 +717,7 @@ mod tests {
                 .sql_modal
                 .editor
                 .set_content("DELETE FROM users WHERE id=1".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
 
             let effects =
                 reduce_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now())
@@ -388,7 +742,7 @@ mod tests {
                 .sql_modal
                 .editor
                 .set_content("DROP TABLE users".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
 
             reduce_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now());
 
@@ -405,7 +759,7 @@ mod tests {
                 .sql_modal
                 .editor
                 .set_content("TRUNCATE users".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
 
             reduce_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now());
 
@@ -426,20 +780,13 @@ mod tests {
                 .sql_modal
                 .editor
                 .set_content("DELETE FROM users WHERE id=1".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
-            state.session.read_only = true;
+            activate_postgres_connection(&mut state);
+            state.session.enable_read_only();
 
             reduce_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now());
 
-            assert!(state.explain.error.is_some());
-            assert!(
-                state
-                    .explain
-                    .error
-                    .as_deref()
-                    .unwrap()
-                    .contains("Read-only")
-            );
+            assert!(state.explain.error().is_some());
+            assert!(state.explain.error().unwrap().contains("Read-only"));
             assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Plan);
             assert!(state.confirm_dialog.intent().is_none());
         }
@@ -451,15 +798,15 @@ mod tests {
                 .sql_modal
                 .editor
                 .set_content("SELECT * FROM users".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
-            state.session.read_only = true;
+            activate_postgres_connection(&mut state);
+            state.session.enable_read_only();
 
             let effects =
                 reduce_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now())
                     .into_effects()
                     .expect("reducer should handle action");
 
-            assert!(state.explain.error.is_none());
+            assert!(state.explain.error().is_none());
             assert_eq!(effects.len(), 1);
             assert!(matches!(
                 &effects[0],
@@ -471,47 +818,73 @@ mod tests {
         }
 
         #[test]
+        fn mysql_read_only_confirms_select_analyze_with_read_only_access_mode() {
+            let mut state = sql_modal_state();
+            state.sql_modal.editor.set_content("SELECT 1".to_string());
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
+            state.session.enable_read_only();
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now())
+                    .unwrap();
+
+            assert!(effects.is_empty());
+            assert!(matches!(
+                state.sql_modal.status(),
+                SqlModalStatus::ConfirmingAnalyzeRisk {
+                    reason: AcknowledgeReason::AnalyzeExecution,
+                    ..
+                }
+            ));
+
+            let effects =
+                dispatch_explain(&mut state, &Action::ExplainAnalyzeConfirm, Instant::now())
+                    .unwrap();
+
+            assert!(matches!(
+                &effects[0],
+                Effect::ExecuteExplain {
+                    query,
+                    is_analyze: true,
+                    access_mode: AccessMode::ReadOnly,
+                    ..
+                } if query == "EXPLAIN ANALYZE FORMAT=TREE SELECT 1"
+            ));
+        }
+
+        #[test]
         fn read_only_blocks_insert_analyze() {
             let mut state = sql_modal_state();
             state
                 .sql_modal
                 .editor
                 .set_content("INSERT INTO users VALUES (1)".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
-            state.session.read_only = true;
+            activate_postgres_connection(&mut state);
+            state.session.enable_read_only();
 
             reduce_explain(&mut state, &Action::ExplainAnalyzeRequest, Instant::now());
 
-            assert!(
-                state
-                    .explain
-                    .error
-                    .as_deref()
-                    .unwrap()
-                    .contains("Read-only")
-            );
+            assert!(state.explain.error().unwrap().contains("Read-only"));
         }
     }
 
     mod analyze_confirm_cancel {
         use super::*;
-        use crate::model::shared::text_input::TextInputState;
-
         #[test]
         fn confirm_from_high_with_matching_table_emits_effect() {
             let mut state = sql_modal_state();
-            state.session.dsn = Some("dsn://test".to_string());
-            let mut input = crate::model::shared::text_input::TextInputState::default();
+            activate_postgres_connection(&mut state);
+            state.sql_modal.begin_confirming_analyze_high(
+                "DELETE FROM users".to_string(),
+                "users".to_string(),
+            );
             for c in "users".chars() {
-                input.insert_char(c);
+                state
+                    .sql_modal
+                    .confirming_analyze_high_input_mut()
+                    .expect("analyze confirmation should have input")
+                    .insert_char(c);
             }
-            state
-                .sql_modal
-                .set_status_for_test(SqlModalStatus::ConfirmingAnalyzeHigh {
-                    query: "DELETE FROM users".to_string(),
-                    input,
-                    target_name: "users".to_string(),
-                });
 
             let effects =
                 reduce_explain(&mut state, &Action::ExplainAnalyzeConfirm, Instant::now())
@@ -525,16 +898,16 @@ mod tests {
         #[test]
         fn confirm_from_high_with_mismatch_is_noop() {
             let mut state = sql_modal_state();
-            state.session.dsn = Some("dsn://test".to_string());
-            let mut input = crate::model::shared::text_input::TextInputState::default();
-            input.insert_char('x');
+            activate_postgres_connection(&mut state);
+            state.sql_modal.begin_confirming_analyze_high(
+                "DELETE FROM users".to_string(),
+                "users".to_string(),
+            );
             state
                 .sql_modal
-                .set_status_for_test(SqlModalStatus::ConfirmingAnalyzeHigh {
-                    query: "DELETE FROM users".to_string(),
-                    input,
-                    target_name: "users".to_string(),
-                });
+                .confirming_analyze_high_input_mut()
+                .expect("analyze confirmation should have input")
+                .insert_char('x');
 
             let effects =
                 reduce_explain(&mut state, &Action::ExplainAnalyzeConfirm, Instant::now())
@@ -553,11 +926,7 @@ mod tests {
             let mut state = sql_modal_state();
             state
                 .sql_modal
-                .set_status_for_test(SqlModalStatus::ConfirmingAnalyzeHigh {
-                    query: "DROP TABLE users".to_string(),
-                    input: TextInputState::default(),
-                    target_name: "users".to_string(),
-                });
+                .begin_confirming_analyze_high("DROP TABLE users".to_string(), "users".to_string());
 
             reduce_explain(&mut state, &Action::ExplainAnalyzeCancel, Instant::now());
 
@@ -568,14 +937,11 @@ mod tests {
         fn confirm_from_risk_acknowledge_emits_effect() {
             use crate::policy::write::sql_risk::AcknowledgeReason;
             let mut state = sql_modal_state();
-            state.session.dsn = Some("dsn://test".to_string());
-            state
-                .sql_modal
-                .set_status_for_test(SqlModalStatus::ConfirmingAnalyzeRisk {
-                    query: "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE"
-                        .to_string(),
-                    reason: AcknowledgeReason::UnknownRisk,
-                });
+            activate_postgres_connection(&mut state);
+            state.sql_modal.begin_confirming_analyze_risk(
+                "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE".to_string(),
+                AcknowledgeReason::UnknownRisk,
+            );
 
             let effects =
                 reduce_explain(&mut state, &Action::ExplainAnalyzeConfirm, Instant::now())
@@ -590,12 +956,10 @@ mod tests {
         fn cancel_from_risk_acknowledge_resets_to_normal() {
             use crate::policy::write::sql_risk::AcknowledgeReason;
             let mut state = sql_modal_state();
-            state
-                .sql_modal
-                .set_status_for_test(SqlModalStatus::ConfirmingAnalyzeRisk {
-                    query: "GRANT SELECT ON users TO role1".to_string(),
-                    reason: AcknowledgeReason::UnknownRisk,
-                });
+            state.sql_modal.begin_confirming_analyze_risk(
+                "GRANT SELECT ON users TO role1".to_string(),
+                AcknowledgeReason::UnknownRisk,
+            );
 
             reduce_explain(&mut state, &Action::ExplainAnalyzeCancel, Instant::now());
 
@@ -609,14 +973,16 @@ mod tests {
         #[test]
         fn sets_plan_and_switches_to_plan_tab() {
             let mut state = sql_modal_state();
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
             let _ = state.query.begin_running(Instant::now());
-            state.sql_modal.set_status_for_test(SqlModalStatus::Running);
+            state.sql_modal.begin_adhoc_running();
+            let database_generation = state.session.database_generation();
 
             reduce_explain(
                 &mut state,
                 &Action::ExplainCompleted {
-                    dsn: "dsn://test".to_string(),
+                    database_type: DatabaseType::PostgreSQL,
+                    database_generation,
                     run_id: 1,
                     query: "SELECT 1".to_string(),
                     plan_text: "Seq Scan".to_string(),
@@ -626,27 +992,65 @@ mod tests {
                 Instant::now(),
             );
 
-            assert_eq!(state.explain.plan_text.as_deref(), Some("Seq Scan"));
+            assert_eq!(state.explain.plan_text(), Some("Seq Scan"));
             assert_eq!(*state.sql_modal.status(), SqlModalStatus::Normal);
             assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Plan);
             assert!(!state.query.is_running());
         }
 
         #[test]
-        fn mismatched_dsn_does_not_replace_plan() {
+        fn mysql_completion_uses_tree_parser() {
             let mut state = sql_modal_state();
-            state.session.dsn = Some("dsn://current".to_string());
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
             let _ = state.query.begin_running(Instant::now());
-            state.sql_modal.set_status_for_test(SqlModalStatus::Running);
-            state
-                .explain
-                .set_plan("Original".to_string(), false, 10, "SELECT old");
+            state.sql_modal.begin_adhoc_running();
+            let database_generation = state.session.database_generation();
 
             reduce_explain(
                 &mut state,
                 &Action::ExplainCompleted {
-                    dsn: "dsn://stale".to_string(),
+                    database_type: DatabaseType::MySQL,
+                    database_generation,
                     run_id: 1,
+                    query: "SELECT 1".to_string(),
+                    plan_text: "-> Table scan on users  (cost=1.25 rows=2.5)".to_string(),
+                    is_analyze: false,
+                    execution_time_ms: 42,
+                },
+                Instant::now(),
+            );
+
+            let plan = state.explain.right().expect("MySQL plan").plan.clone();
+            assert_eq!(plan.total_cost, Some(1.25));
+            assert_eq!(plan.estimated_rows, Some(2.5));
+            assert_eq!(
+                plan.raw_text,
+                "-> Table scan on users  (cost=1.25 rows=2.5)"
+            );
+        }
+
+        #[test]
+        fn stale_run_does_not_replace_plan() {
+            let mut state = sql_modal_state();
+            test_fixtures::activate_postgres_connection(&mut state, "dsn://current");
+            let stale_run_id = state.query.begin_running(Instant::now());
+            let _current_run_id = state.query.begin_running(Instant::now());
+            state.sql_modal.begin_adhoc_running();
+            let database_generation = state.session.database_generation();
+            state.explain.set_plan(
+                "Original".to_string(),
+                DatabaseType::PostgreSQL,
+                false,
+                10,
+                "SELECT old",
+            );
+
+            reduce_explain(
+                &mut state,
+                &Action::ExplainCompleted {
+                    database_type: DatabaseType::PostgreSQL,
+                    database_generation,
+                    run_id: stale_run_id,
                     query: "SELECT stale".to_string(),
                     plan_text: "Stale".to_string(),
                     is_analyze: false,
@@ -655,11 +1059,51 @@ mod tests {
                 Instant::now(),
             );
 
-            assert_eq!(state.explain.plan_text.as_deref(), Some("Original"));
-            assert_eq!(
-                state.explain.plan_query_snippet.as_deref(),
-                Some("SELECT old")
+            assert_eq!(state.explain.plan_text(), Some("Original"));
+            assert_eq!(state.explain.plan_query_snippet(), Some("SELECT old"));
+            assert_eq!(*state.sql_modal.status(), SqlModalStatus::Running);
+        }
+
+        #[test]
+        fn mismatched_database_generation_does_not_replace_plan() {
+            let mut state = sql_modal_state();
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
+            let database_generation = state.session.database_generation();
+            let run_id = state.query.begin_running(Instant::now());
+            state.sql_modal.begin_adhoc_running();
+            state.explain.set_plan(
+                "original".to_string(),
+                DatabaseType::MySQL,
+                false,
+                10,
+                "SELECT old",
             );
+
+            let id = state.session.active_connection_id().cloned().unwrap();
+            let name = state.session.active_connection_name().unwrap().to_string();
+            state.session.activate_connection_with_target(
+                &id,
+                &name,
+                DatabaseType::MySQL,
+                "mysql://test",
+                Some("analytics"),
+            );
+
+            reduce_explain(
+                &mut state,
+                &Action::ExplainCompleted {
+                    database_type: DatabaseType::MySQL,
+                    database_generation,
+                    run_id,
+                    query: "SELECT stale".to_string(),
+                    plan_text: "stale".to_string(),
+                    is_analyze: false,
+                    execution_time_ms: 42,
+                },
+                Instant::now(),
+            );
+
+            assert_eq!(state.explain.plan_text(), Some("original"));
             assert_eq!(*state.sql_modal.status(), SqlModalStatus::Running);
         }
     }
@@ -671,22 +1115,24 @@ mod tests {
         #[test]
         fn sets_error_and_switches_to_plan_tab() {
             let mut state = sql_modal_state();
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
             let _ = state.query.begin_running(Instant::now());
-            state.sql_modal.set_status_for_test(SqlModalStatus::Running);
+            state.sql_modal.begin_adhoc_running();
+            let database_generation = state.session.database_generation();
 
             reduce_explain(
                 &mut state,
                 &Action::ExplainFailed {
-                    dsn: "dsn://test".to_string(),
+                    database_generation,
                     run_id: 1,
                     error: DbOperationError::QueryFailed("syntax error".to_string()),
+                    is_analyze: false,
                 },
                 Instant::now(),
             );
 
             assert_eq!(
-                state.explain.error.as_deref(),
+                state.explain.error(),
                 Some("Query failed: syntax error. Review the database error details and SQL.")
             );
             assert_eq!(*state.sql_modal.status(), SqlModalStatus::Normal);
@@ -695,27 +1141,86 @@ mod tests {
         }
 
         #[test]
-        fn mismatched_dsn_does_not_replace_plan_with_error() {
+        fn stale_run_does_not_replace_plan_with_error() {
             let mut state = sql_modal_state();
-            state.session.dsn = Some("dsn://current".to_string());
-            let _ = state.query.begin_running(Instant::now());
-            state.sql_modal.set_status_for_test(SqlModalStatus::Running);
-            state
-                .explain
-                .set_plan("Original".to_string(), false, 10, "SELECT old");
+            test_fixtures::activate_postgres_connection(&mut state, "dsn://current");
+            let stale_run_id = state.query.begin_running(Instant::now());
+            let _current_run_id = state.query.begin_running(Instant::now());
+            state.sql_modal.begin_adhoc_running();
+            let database_generation = state.session.database_generation();
+            state.explain.set_plan(
+                "Original".to_string(),
+                DatabaseType::PostgreSQL,
+                false,
+                10,
+                "SELECT old",
+            );
 
             reduce_explain(
                 &mut state,
                 &Action::ExplainFailed {
-                    dsn: "dsn://stale".to_string(),
-                    run_id: 1,
+                    database_generation,
+                    run_id: stale_run_id,
                     error: DbOperationError::QueryFailed("syntax error".to_string()),
+                    is_analyze: false,
                 },
                 Instant::now(),
             );
 
-            assert_eq!(state.explain.plan_text.as_deref(), Some("Original"));
-            assert_eq!(state.explain.error, None);
+            assert_eq!(state.explain.plan_text(), Some("Original"));
+            assert_eq!(state.explain.error(), None);
+            assert_eq!(*state.sql_modal.status(), SqlModalStatus::Running);
+        }
+
+        #[test]
+        fn mismatched_database_generation_does_not_replace_plan_with_error() {
+            let mut state = sql_modal_state();
+            test_fixtures::activate_mysql_connection(&mut state, "mysql://test");
+            state.explain.set_plan(
+                "original plan".to_string(),
+                DatabaseType::MySQL,
+                false,
+                10,
+                "SELECT old",
+            );
+            state.explain.set_plan(
+                "latest plan".to_string(),
+                DatabaseType::MySQL,
+                false,
+                20,
+                "SELECT latest",
+            );
+            let left_query = state.explain.left().unwrap().full_query.clone();
+            let right_query = state.explain.right().unwrap().full_query.clone();
+            let database_generation = state.session.database_generation();
+            let run_id = state.query.begin_running(Instant::now());
+            state.sql_modal.begin_adhoc_running();
+
+            let id = state.session.active_connection_id().cloned().unwrap();
+            let name = state.session.active_connection_name().unwrap().to_string();
+            state.session.activate_connection_with_target(
+                &id,
+                &name,
+                DatabaseType::MySQL,
+                "mysql://test",
+                Some("analytics"),
+            );
+
+            reduce_explain(
+                &mut state,
+                &Action::ExplainFailed {
+                    database_generation,
+                    run_id,
+                    error: DbOperationError::QueryFailed("stale error".to_string()),
+                    is_analyze: false,
+                },
+                Instant::now(),
+            );
+
+            assert_eq!(state.explain.plan_text(), Some("latest plan"));
+            assert_eq!(state.explain.error(), None);
+            assert_eq!(state.explain.left().unwrap().full_query, left_query);
+            assert_eq!(state.explain.right().unwrap().full_query, right_query);
             assert_eq!(*state.sql_modal.status(), SqlModalStatus::Running);
         }
     }
@@ -724,18 +1229,53 @@ mod tests {
         use super::*;
 
         #[test]
+        fn sqlite_connection_rejects_compare_edit_query_with_error() {
+            let mut state = sql_modal_state();
+            state.explain.set_plan(
+                "stale plan".to_string(),
+                DatabaseType::PostgreSQL,
+                false,
+                1,
+                "SELECT stale",
+            );
+            state
+                .sql_modal
+                .editor
+                .set_content("SELECT current".to_string());
+            state.sql_modal.set_active_tab(SqlModalTab::Compare);
+
+            activate_sqlite_connection(&mut state);
+            let editor_before = state.sql_modal.editor.content().to_string();
+            let status_before = state.sql_modal.status().clone();
+            let active_tab_before = state.sql_modal.active_tab();
+
+            assert_eq!(
+                state.explain.right().map(|slot| slot.full_query.as_str()),
+                Some("SELECT stale")
+            );
+            reduce_at_boundary(&mut state, Action::CompareEditQuery);
+
+            assert_eq!(state.sql_modal.editor.content(), editor_before);
+            assert_eq!(state.sql_modal.status(), &status_before);
+            assert_eq!(state.sql_modal.active_tab(), active_tab_before);
+            assert!(state.messages.last_error.is_none());
+        }
+
+        #[test]
         fn two_explains_auto_advance_returns_comparable_slots() {
             let mut state = sql_modal_state();
             state.sql_modal.editor.set_content("SELECT 1".to_string());
-            state.session.dsn = Some("dsn://test".to_string());
+            activate_postgres_connection(&mut state);
             let now = Instant::now();
+            let database_generation = state.session.database_generation();
 
             // Step 1: First EXPLAIN
             reduce_explain(&mut state, &Action::ExplainRequest, now);
             reduce_explain(
                 &mut state,
                 &Action::ExplainCompleted {
-                    dsn: "dsn://test".to_string(),
+                    database_type: DatabaseType::PostgreSQL,
+                    database_generation,
                     run_id: 1,
                     query: "SELECT 1".to_string(),
                     plan_text: "Seq Scan  (cost=0.00..100.00 rows=10 width=32)".to_string(),
@@ -750,10 +1290,12 @@ mod tests {
             // Step 2: Second EXPLAIN — auto-advance moves right→left
             state.sql_modal.editor.set_content("SELECT 2".to_string());
             reduce_explain(&mut state, &Action::ExplainRequest, now);
+            let database_generation = state.session.database_generation();
             reduce_explain(
                 &mut state,
                 &Action::ExplainCompleted {
-                    dsn: "dsn://test".to_string(),
+                    database_type: DatabaseType::PostgreSQL,
+                    database_generation,
                     run_id: 2,
                     query: "SELECT 2".to_string(),
                     plan_text: "Index Scan  (cost=0.00..5.00 rows=1 width=32)".to_string(),
@@ -778,6 +1320,7 @@ mod tests {
 
     mod scroll {
         use super::*;
+        use crate::model::explain_context::ExplainContext;
 
         #[test]
         fn plan_scroll_up_saturates_at_zero() {
@@ -800,12 +1343,14 @@ mod tests {
         #[test]
         fn plan_scroll_down_increments() {
             let mut state = sql_modal_state();
-            state.ui.terminal_height = 24;
+            state.ui.set_terminal_height(24);
             let long_plan = (0..20)
                 .map(|i| format!("line{i}"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            state.explain.set_plan(long_plan, false, 0, "Q1");
+            state
+                .explain
+                .set_plan(long_plan, DatabaseType::PostgreSQL, false, 0, "Q1");
 
             reduce_explain(
                 &mut state,
@@ -823,15 +1368,15 @@ mod tests {
         #[test]
         fn plan_scroll_down_clamps_at_max() {
             let mut state = sql_modal_state();
-            state.ui.terminal_height = 24;
+            state.ui.set_terminal_height(24);
             let long_plan = (0..20)
                 .map(|i| format!("line{i}"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            state.explain.set_plan(long_plan, false, 0, "Q1");
-            let modal_inner = crate::model::explain_context::ExplainContext::modal_inner_height(
-                state.ui.terminal_height,
-            );
+            state
+                .explain
+                .set_plan(long_plan, DatabaseType::PostgreSQL, false, 0, "Q1");
+            let modal_inner = ExplainContext::modal_inner_height(state.ui.terminal_height());
             let max = state.explain.line_count().saturating_sub(modal_inner);
             state.explain.scroll_offset = max;
 
@@ -873,8 +1418,12 @@ mod tests {
                 .map(|i| format!("  ->  Node{i}  (cost=0.00..{i}.00 rows=1 width=32)"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            state.explain.set_plan(long_plan.clone(), false, 0, "Q1");
-            state.explain.set_plan(long_plan, false, 0, "Q2");
+            state
+                .explain
+                .set_plan(long_plan.clone(), DatabaseType::PostgreSQL, false, 0, "Q1");
+            state
+                .explain
+                .set_plan(long_plan, DatabaseType::PostgreSQL, false, 0, "Q2");
 
             reduce_explain(
                 &mut state,
@@ -892,15 +1441,19 @@ mod tests {
         #[test]
         fn compare_scroll_down_stops_at_max() {
             let mut state = sql_modal_state();
-            state.ui.terminal_height = 24;
+            state.ui.set_terminal_height(24);
             let long_plan = (0..20)
                 .map(|i| format!("  ->  Node{i}  (cost=0.00..{i}.00 rows=1 width=32)"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            state.explain.set_plan(long_plan.clone(), false, 0, "Q1");
-            state.explain.set_plan(long_plan, false, 0, "Q2");
+            state
+                .explain
+                .set_plan(long_plan.clone(), DatabaseType::PostgreSQL, false, 0, "Q1");
+            state
+                .explain
+                .set_plan(long_plan, DatabaseType::PostgreSQL, false, 0, "Q2");
 
-            let max = state.explain.compare_max_scroll(state.ui.terminal_height);
+            let max = state.explain.compare_max_scroll(state.ui.terminal_height());
 
             // Scroll to max
             for _ in 0..max + 5 {
@@ -933,12 +1486,14 @@ mod tests {
         #[test]
         fn right_only_plan_scroll_down_increments() {
             let mut state = sql_modal_state();
-            state.ui.terminal_height = 24;
+            state.ui.set_terminal_height(24);
             let long_plan = (0..20)
                 .map(|i| format!("  ->  Node{i}  (cost=0.00..{i}.00 rows=1 width=32)"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            state.explain.set_plan(long_plan, false, 0, "Q1");
+            state
+                .explain
+                .set_plan(long_plan, DatabaseType::PostgreSQL, false, 0, "Q1");
 
             reduce_explain(
                 &mut state,
@@ -977,6 +1532,7 @@ mod tests {
         #[test]
         fn next_tab_switches_sql_to_plan() {
             let mut state = sql_modal_state();
+            activate_postgres_connection(&mut state);
             state.sql_modal.set_active_tab(SqlModalTab::Sql);
 
             reduce_explain(&mut state, &Action::SqlModalNextTab, Instant::now());
@@ -987,6 +1543,7 @@ mod tests {
         #[test]
         fn next_tab_switches_plan_to_compare() {
             let mut state = sql_modal_state();
+            activate_postgres_connection(&mut state);
             state.sql_modal.set_active_tab(SqlModalTab::Plan);
 
             reduce_explain(&mut state, &Action::SqlModalNextTab, Instant::now());
@@ -997,6 +1554,7 @@ mod tests {
         #[test]
         fn next_tab_switches_compare_to_sql() {
             let mut state = sql_modal_state();
+            activate_postgres_connection(&mut state);
             state.sql_modal.set_active_tab(SqlModalTab::Compare);
 
             reduce_explain(&mut state, &Action::SqlModalNextTab, Instant::now());
@@ -1009,12 +1567,29 @@ mod tests {
             let mut state = sql_modal_state();
             state.sql_modal.set_active_tab(SqlModalTab::Sql);
 
-            reduce_explain_with_services(
-                &mut state,
-                &Action::SqlModalNextTab,
-                Instant::now(),
-                &services_without_explain(),
-            );
+            dispatch_explain(&mut state, &Action::SqlModalNextTab, Instant::now());
+
+            assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Sql);
+        }
+
+        #[test]
+        fn next_tab_cycles_to_plan_for_sqlite_connection() {
+            let mut state = sql_modal_state();
+            activate_sqlite_connection(&mut state);
+            state.sql_modal.set_active_tab(SqlModalTab::Sql);
+
+            dispatch_explain(&mut state, &Action::SqlModalNextTab, Instant::now());
+
+            assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Plan);
+        }
+
+        #[test]
+        fn next_tab_cycles_from_plan_back_to_sql_for_sqlite_connection() {
+            let mut state = sql_modal_state();
+            activate_sqlite_connection(&mut state);
+            state.sql_modal.set_active_tab(SqlModalTab::Plan);
+
+            dispatch_explain(&mut state, &Action::SqlModalNextTab, Instant::now());
 
             assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Sql);
         }
@@ -1024,12 +1599,7 @@ mod tests {
             let mut state = sql_modal_state();
             state.sql_modal.set_active_tab(SqlModalTab::Plan);
 
-            reduce_explain_with_services(
-                &mut state,
-                &Action::SqlModalNextTab,
-                Instant::now(),
-                &services_without_explain(),
-            );
+            dispatch_explain(&mut state, &Action::SqlModalNextTab, Instant::now());
 
             assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Sql);
         }
@@ -1037,6 +1607,7 @@ mod tests {
         #[test]
         fn prev_tab_switches_sql_to_compare() {
             let mut state = sql_modal_state();
+            activate_postgres_connection(&mut state);
             state.sql_modal.set_active_tab(SqlModalTab::Sql);
 
             reduce_explain(&mut state, &Action::SqlModalPrevTab, Instant::now());
@@ -1047,6 +1618,7 @@ mod tests {
         #[test]
         fn prev_tab_switches_compare_to_plan() {
             let mut state = sql_modal_state();
+            activate_postgres_connection(&mut state);
             state.sql_modal.set_active_tab(SqlModalTab::Compare);
 
             reduce_explain(&mut state, &Action::SqlModalPrevTab, Instant::now());
@@ -1057,6 +1629,7 @@ mod tests {
         #[test]
         fn prev_tab_switches_plan_to_sql() {
             let mut state = sql_modal_state();
+            activate_postgres_connection(&mut state);
             state.sql_modal.set_active_tab(SqlModalTab::Plan);
 
             reduce_explain(&mut state, &Action::SqlModalPrevTab, Instant::now());
@@ -1069,12 +1642,29 @@ mod tests {
             let mut state = sql_modal_state();
             state.sql_modal.set_active_tab(SqlModalTab::Sql);
 
-            reduce_explain_with_services(
-                &mut state,
-                &Action::SqlModalPrevTab,
-                Instant::now(),
-                &services_without_explain(),
-            );
+            dispatch_explain(&mut state, &Action::SqlModalPrevTab, Instant::now());
+
+            assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Sql);
+        }
+
+        #[test]
+        fn prev_tab_cycles_to_plan_for_sqlite_connection() {
+            let mut state = sql_modal_state();
+            activate_sqlite_connection(&mut state);
+            state.sql_modal.set_active_tab(SqlModalTab::Sql);
+
+            dispatch_explain(&mut state, &Action::SqlModalPrevTab, Instant::now());
+
+            assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Plan);
+        }
+
+        #[test]
+        fn prev_tab_cycles_from_plan_back_to_sql_for_sqlite_connection() {
+            let mut state = sql_modal_state();
+            activate_sqlite_connection(&mut state);
+            state.sql_modal.set_active_tab(SqlModalTab::Plan);
+
+            dispatch_explain(&mut state, &Action::SqlModalPrevTab, Instant::now());
 
             assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Sql);
         }
@@ -1084,12 +1674,7 @@ mod tests {
             let mut state = sql_modal_state();
             state.sql_modal.set_active_tab(SqlModalTab::Compare);
 
-            reduce_explain_with_services(
-                &mut state,
-                &Action::SqlModalPrevTab,
-                Instant::now(),
-                &services_without_explain(),
-            );
+            dispatch_explain(&mut state, &Action::SqlModalPrevTab, Instant::now());
 
             assert_eq!(state.sql_modal.active_tab(), SqlModalTab::Sql);
         }

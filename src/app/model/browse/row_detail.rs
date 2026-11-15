@@ -1,3 +1,4 @@
+use crate::domain::QueryValue;
 use serde_json::Value;
 use unicode_width::UnicodeWidthStr;
 
@@ -12,22 +13,13 @@ pub struct RowDetailState {
 
 impl RowDetailState {
     pub fn open(columns: &[String], cells: &[String]) -> Self {
-        let mut display_lines = Vec::new();
-        for (col, cell) in columns.iter().zip(cells.iter()) {
-            display_lines.push(col.clone());
-            for line in cell.lines() {
-                display_lines.push(format!("  {line}"));
-            }
-            display_lines.push(String::new());
-        }
-        let display_text = display_lines.join("\n") + "\n";
+        let display_text = Self::display_text(columns, cells);
 
-        let mut obj = serde_json::Map::new();
-        for (col, cell) in columns.iter().zip(cells.iter()) {
-            obj.insert(col.clone(), infer_json_value(cell));
-        }
-        let json_text =
-            serde_json::to_string_pretty(&Value::Object(obj)).unwrap_or_else(|_| "{}".to_string());
+        let json_text = serde_json::to_string_pretty(&row_json(
+            columns,
+            cells.iter().map(|cell| infer_json_value(cell)),
+        ))
+        .unwrap_or_else(|_| "{}".to_string());
 
         Self {
             display_text,
@@ -36,6 +28,36 @@ impl RowDetailState {
             horizontal_offset: 0,
             active: true,
         }
+    }
+
+    pub fn open_with_values(columns: &[String], values: &[QueryValue]) -> Self {
+        let cells = values
+            .iter()
+            .map(QueryValue::display_value)
+            .collect::<Vec<_>>();
+        let display_text = Self::display_text(columns, &cells);
+        let json_text =
+            serde_json::to_string_pretty(&row_json(columns, values.iter().map(sqlite_json_value)))
+                .unwrap_or_else(|_| "{}".to_string());
+        Self {
+            display_text,
+            json_text,
+            scroll_offset: 0,
+            horizontal_offset: 0,
+            active: true,
+        }
+    }
+
+    fn display_text(columns: &[String], cells: &[String]) -> String {
+        let mut display_lines = Vec::new();
+        for (column, cell) in columns.iter().zip(cells.iter()) {
+            display_lines.push(column.clone());
+            for line in cell.lines() {
+                display_lines.push(format!("  {line}"));
+            }
+            display_lines.push(String::new());
+        }
+        display_lines.join("\n") + "\n"
     }
 
     pub fn close(&mut self) {
@@ -117,6 +139,40 @@ impl RowDetailState {
 
     pub fn json_for_yank(&self) -> String {
         self.json_text.clone()
+    }
+}
+
+fn sqlite_json_value(value: &QueryValue) -> Value {
+    match value {
+        QueryValue::Null => Value::Null,
+        QueryValue::Text(value) => Value::String(value.clone()),
+        QueryValue::Blob(_) => Value::String(value.copy_value()),
+        QueryValue::SqlLiteral(value) => {
+            serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.clone()))
+        }
+    }
+}
+
+fn row_json<I>(columns: &[String], values: I) -> Value
+where
+    I: IntoIterator<Item = Value>,
+{
+    if columns
+        .iter()
+        .enumerate()
+        .any(|(index, column)| columns[..index].contains(column))
+    {
+        Value::Array(
+            columns
+                .iter()
+                .zip(values)
+                .map(|(column, value)| {
+                    Value::Object(std::iter::once((column.clone(), value)).collect())
+                })
+                .collect(),
+        )
+    } else {
+        Value::Object(columns.iter().cloned().zip(values).collect())
     }
 }
 
@@ -222,5 +278,83 @@ mod tests {
         assert!(json.contains("\"name\": \"alice\""));
 
         assert_eq!(state.content_for_yank(), content);
+    }
+
+    #[test]
+    fn duplicate_columns_build_ordered_json_array() {
+        let state = RowDetailState::open(
+            &["x".to_string(), "x".to_string(), "name".to_string()],
+            &["1".to_string(), "2".to_string(), "alice".to_string()],
+        );
+
+        assert_eq!(
+            state.json_for_yank(),
+            "[\n  {\n    \"x\": 1\n  },\n  {\n    \"x\": 2\n  },\n  {\n    \"name\": \"alice\"\n  }\n]"
+        );
+    }
+
+    #[test]
+    fn typed_values_preserve_sqlite_storage_classes_in_json() {
+        let state = RowDetailState::open_with_values(
+            &[
+                "empty".to_string(),
+                "number_text".to_string(),
+                "blob".to_string(),
+            ],
+            &[
+                QueryValue::Text(String::new()),
+                QueryValue::Text("42".to_string()),
+                QueryValue::Blob(vec![0xAB, 0xCD]),
+            ],
+        );
+
+        assert_eq!(
+            state.json_for_yank(),
+            "{\n  \"blob\": \"X'ABCD'\",\n  \"empty\": \"\",\n  \"number_text\": \"42\"\n}"
+        );
+    }
+
+    #[test]
+    fn duplicate_typed_columns_preserve_values_in_order() {
+        let state = RowDetailState::open_with_values(
+            &[
+                "x".to_string(),
+                "x".to_string(),
+                "payload".to_string(),
+                "empty".to_string(),
+            ],
+            &[
+                QueryValue::Text("first".to_string()),
+                QueryValue::Blob(vec![0xAB]),
+                QueryValue::SqlLiteral(r#"{"ok":true}"#.to_string()),
+                QueryValue::Null,
+            ],
+        );
+
+        assert_eq!(
+            state.json_for_yank(),
+            "[\n  {\n    \"x\": \"first\"\n  },\n  {\n    \"x\": \"X'AB'\"\n  },\n  {\n    \"payload\": {\n      \"ok\": true\n    }\n  },\n  {\n    \"empty\": null\n  }\n]"
+        );
+    }
+
+    #[test]
+    fn sql_literals_preserve_json_values_and_invalid_literals_as_strings() {
+        let state = RowDetailState::open_with_values(
+            &[
+                "number".to_string(),
+                "boolean".to_string(),
+                "invalid".to_string(),
+            ],
+            &[
+                QueryValue::SqlLiteral("42".to_string()),
+                QueryValue::SqlLiteral("true".to_string()),
+                QueryValue::SqlLiteral("not json".to_string()),
+            ],
+        );
+
+        assert_eq!(
+            state.json_for_yank(),
+            "{\n  \"boolean\": true,\n  \"invalid\": \"not json\",\n  \"number\": 42\n}"
+        );
     }
 }

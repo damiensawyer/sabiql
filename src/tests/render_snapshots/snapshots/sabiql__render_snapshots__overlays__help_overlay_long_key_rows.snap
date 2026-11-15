@@ -2,7 +2,7 @@
 source: src/tests/render_snapshots/overlays.rs
 expression: output
 ---
-test_project | test_db | - | no dsn | localhost:5432/test                                                                                                            
+test_project ▸ test_db ▸ -                                                                                                            connected | localhost:5432/test
 ┌ [1] Explorer ─────────────────────────┐[Info] [Cols] [Idx] [FK] [RLS] [Trig] [DDL]                                                                                 
 │> public.users                         │┌ [2] Inspector ───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │  public.posts                         ││(select a table)                                                                                                          │
@@ -19,17 +19,21 @@ test_project | test_db | - | no dsn | localhost:5432/test
 │                        │  Home/End                                     Jump to start/end                                                ││                        │
 │                        │  :                                            Open command line                                                ││                        │
 │                        │  Esc                                          Exit to Cell Active (draft preserved)                            ││                        │
-│                        │  Home / End                                   Line start/end                                                   ││                        │
 │                        │  Enter                                        Execute the confirmed statement                                  ││                        │
 │                        │  Esc                                          Cancel and return to editor                                      ││                        │
+│                        │  Esc                                          Return to Normal mode                                            ││                        │
+│                        │  ↑↓←→                                         Move cursor                                                      ┃│                        │
+│                        │  Home / End                                   Line start/end                                                   ┃│                        │
 │                        │                                                                                                                ┃│                        │
 │                        │▸ Search / Filter                                                                                               ┃│                        │
+│                        │  type                                         Type to filter                                                   ┃│────────────────────────┘
+│                        │  type                                         Type to filter                                                   ┃│────────────────────────┐
 │                        │  type                                         Type to filter                                                   ┃│                        │
 │                        │  type                                         Type to search                                                   ┃│                        │
-│                        │  Enter                                        Confirm search                                                   ┃│────────────────────────┘
-│                        │  Esc                                          Cancel search                                                    ┃│────────────────────────┐
-│                        │  Ctrl+N / Ctrl+P / j / k / ↑ / ↓              Scroll down / up                                                 ┃│                        │
-│                        │  Home / End                                   Jump to top / bottom                                             ┃│                        │
+│                        │  Enter                                        Confirm search                                                   ││                        │
+│                        │  Esc                                          Cancel search                                                    ││                        │
+│                        │  Ctrl+N / Ctrl+P / j / k / ↑ / ↓              Scroll down / up                                                 ││                        │
+│                        │  Home / End                                   Jump to top / bottom                                             ││                        │
 │                        │  Ctrl+D / Ctrl+U                              Scroll half page down / up                                       ││                        │
 │                        │  Ctrl+F / Ctrl+B / PageDown / PageUp          Scroll full page down / up                                       ││                        │
 │                        │  h / l / ← / →                                Scroll left / right                                              ││                        │
@@ -40,15 +44,10 @@ test_project | test_db | - | no dsn | localhost:5432/test
 │                        │▸ Connections                                                                                                   ││                        │
 │                        │  Tab/⇧Tab                                     Next/Previous field                                              ││                        │
 │                        │  Tab                                          Next field                                                       ││                        │
-│                        │  ⇧Tab                                         Previous field                                                   ││                        │
-│                        │  Ctrl+S                                       Save and connect                                                 ││                        │
-│                        │  Esc                                          Cancel                                                           ││                        │
-│                        │  Enter                                        Toggle dropdown (SSL field)                                      ││                        │
-│                        │  Ctrl+N / Ctrl+P / ↑ / ↓                      Dropdown navigation                                              ▼│                        │
+│                        │  ⇧Tab                                         Previous field                                                   ▼│                        │
 │                        │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────│                        │
 │                        │ [BROWSE]                                                                                                        │                        │
 │                        ╰ /: Filter │ Esc: Close │ ?: Close ──────────────────────────────────────────────────────────────────────────────╯                        │
 │                                       ││                                                                                                                          │
 │                                       ││                                                                                                                          │
 └───────────────────────────────────────┘└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-/:Filter  ?:Close

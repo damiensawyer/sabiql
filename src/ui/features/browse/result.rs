@@ -6,20 +6,24 @@ use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Cell, Paragraph, Row, Table, Wrap};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::primitives::atoms::{panel_block_highlight, text_cursor_spans};
 
 use crate::app::model::app_state::AppState;
 use crate::app::model::shared::focused_pane::FocusedPane;
+use crate::app::model::shared::input_mode::InputMode;
 use crate::app::model::shared::ui_state::{RESULT_INNER_OVERHEAD, ResultSelection, YankFlash};
 use crate::app::model::shared::viewport::{
     ColumnWidthConfig, ColumnWidthsCache, MAX_COL_WIDTH, SelectionContext, ViewportPlan,
     select_viewport_columns, widths_fingerprint,
 };
 use crate::app::model::shared::wrapped_cell::{self as wrapped_cell_layout, WrappedCellSettings};
-use crate::domain::{QueryResult, QuerySource};
+use crate::domain::{QueryResult, QuerySource, QueryValue};
 use crate::primitives::utils::text_utils::{
-    MIN_COL_WIDTH, PADDING, calculate_header_min_widths, truncate_to_width,
+    MIN_COL_WIDTH, PADDING, calculate_header_min_widths, take_within_width, truncate_to_width,
+    wrap_text_lines,
 };
 use crate::theme::ThemePalette;
 
@@ -72,7 +76,7 @@ impl ResultPane {
         now: Instant,
         theme: &ThemePalette,
     ) -> RenderedResultGeometry {
-        let is_focused = state.ui.focused_pane == FocusedPane::Result;
+        let is_focused = state.ui.focused_pane() == FocusedPane::Result;
         let should_highlight = state
             .query
             .result_highlight_until()
@@ -94,18 +98,17 @@ impl ResultPane {
             if result.is_error() {
                 Self::render_error(frame, area, result, block, theme);
                 default_result()
-            } else if result.rows.is_empty() {
+            } else if result.data_row_count() == 0 {
                 Self::render_empty(frame, area, block, theme);
                 default_result()
             } else {
                 let cell_edit = state.result_interaction.cell_edit();
                 let editing_cell = cell_edit.is_active().then(|| EditingCellView {
-                    row: cell_edit.row.unwrap_or_default(),
-                    col: cell_edit.col.unwrap_or_default(),
+                    row: cell_edit.row().unwrap_or_default(),
+                    col: cell_edit.col().unwrap_or_default(),
                     draft: cell_edit.draft_value(),
-                    actively_editing: state.input_mode()
-                        == crate::app::model::shared::input_mode::InputMode::CellEdit,
-                    cursor: cell_edit.input.cursor(),
+                    actively_editing: state.input_mode() == InputMode::CellEdit,
+                    cursor: cell_edit.input().cursor(),
                 });
                 Self::render_table(
                     frame,
@@ -113,15 +116,15 @@ impl ResultPane {
                     result,
                     block,
                     ResultTableParams {
-                        scroll_offset: state.result_interaction.scroll_offset,
-                        horizontal_offset: state.result_interaction.horizontal_offset,
-                        stored_plan: &state.ui.result_viewport_plan,
-                        stored_cache: &state.ui.result_widths_cache,
+                        scroll_offset: state.result_interaction.scroll_offset(),
+                        horizontal_offset: state.result_interaction.horizontal_offset(),
+                        stored_plan: state.ui.result_viewport_plan(),
+                        stored_cache: state.ui.result_widths_cache(),
                         result_generation: state.query.result_generation(),
                         selection: state.result_interaction.selection(),
                         editing_cell,
                         staged_delete_rows: state.result_interaction.staged_delete_rows(),
-                        yank_flash: state.result_interaction.yank_flash,
+                        yank_flash: state.result_interaction.yank_flash(),
                         cell_vertical_offset: state.result_interaction.cell_vertical_offset,
                         now,
                         effective_wrapped_cell: state.ui.effective_wrapped_cell(),
@@ -152,7 +155,7 @@ impl ResultPane {
                     format!(
                         " [3] {} ({}, {}ms) ",
                         name,
-                        r.row_count_display(),
+                        format_row_count(r.row_count()),
                         r.execution_time_ms,
                     )
                 }
@@ -238,7 +241,7 @@ impl ResultPane {
                 &stored_cache.header_min_widths[..],
             )
         } else {
-            fresh_ideal = calculate_ideal_widths(&result.columns, &result.rows);
+            fresh_ideal = calculate_result_ideal_widths(result);
             fresh_min = calculate_header_min_widths(&result.columns);
             (&fresh_ideal[..], &fresh_min[..])
         };
@@ -264,7 +267,7 @@ impl ResultPane {
         // one line). Wrapped Cell wraps the full cell, so width must account for
         // the widest line — otherwise jsonb output starting with `{` gets squeezed.
         let wrapped_cell_widths = if wrapped_cell_enabled {
-            cached_wrapped_cell_ideal_widths(&mut widths_cache, &result.columns, &result.rows)
+            cached_wrapped_cell_ideal_widths(&mut widths_cache, result)
         } else {
             ideal_widths
         };
@@ -357,7 +360,7 @@ impl ResultPane {
 
         let header = Row::new(viewport_indices.iter().map(|&idx| {
             let col_name = result.columns.get(idx).map_or("", String::as_str);
-            Cell::from(col_name.to_string())
+            Cell::from(col_name)
         }))
         .style(
             Style::default()
@@ -374,13 +377,9 @@ impl ResultPane {
 
         let yank_flash_active = yank_flash.is_some_and(|f| now < f.until);
 
-        let rows: Vec<Row> = result
-            .rows
-            .iter()
-            .enumerate()
-            .skip(scroll_offset)
+        let rows: Vec<Row> = (scroll_offset..result.data_row_count())
             .take(data_rows_visible)
-            .map(|(abs_row_idx, row)| {
+            .map(|abs_row_idx| {
                 let is_staged_for_delete = staged_delete_rows.contains(&abs_row_idx);
                 let is_active_row = active_row == Some(abs_row_idx);
                 let flash_scope = yank_flash
@@ -403,7 +402,6 @@ impl ResultPane {
                     .iter()
                     .zip(viewport_widths.iter())
                     .map(|(&orig_idx, &col_width)| {
-                        let val = row.get(orig_idx).map_or("", String::as_str);
                         let is_editing_cell = editing_cell
                             .as_ref()
                             .is_some_and(|e| e.row == abs_row_idx && e.col == orig_idx);
@@ -412,7 +410,13 @@ impl ResultPane {
                         {
                             render_editing_cell(e, col_width, theme)
                         } else {
-                            let display = truncate_cell(val, col_width as usize);
+                            let display = display_value_at_width(
+                                result,
+                                abs_row_idx,
+                                orig_idx,
+                                col_width as usize,
+                            )
+                            .unwrap_or_default();
                             Cell::from(display)
                         };
                         if !is_editing_cell {
@@ -451,8 +455,8 @@ impl ResultPane {
 
         frame.render_widget(table, inner);
 
-        let total_rows = result.rows.len();
-        let total_cols = result.columns.len();
+        let total_rows = result.data_row_count();
+        let total_cols = result.column_count();
 
         use crate::primitives::atoms::scroll_indicator::{
             HorizontalScrollParams, VerticalScrollParams, render_horizontal_scroll_indicator,
@@ -541,12 +545,10 @@ impl ResultPane {
         let column_widths = wrapped_cell_layout::shrink_columns_to_fit(ideal_widths, inner.width);
 
         let measured_layout = measured_wrapped_cell_layout(stored_wrapped_cell, key, || {
-            result
-                .rows
-                .iter()
-                .map(|row| {
+            (0..result.data_row_count())
+                .map(|row_idx| {
                     wrapped_cell_layout::row_layout(
-                        row,
+                        &display_row(result, row_idx),
                         &column_widths,
                         PADDING,
                         settings.max_lines_per_row,
@@ -607,7 +609,7 @@ impl ResultPane {
                     is_active_row,
                     theme,
                 );
-                let row_data = &result.rows[abs_row_idx];
+                let row_data = display_row(result, abs_row_idx);
                 let cells: Vec<Cell> = column_widths
                     .iter()
                     .enumerate()
@@ -685,7 +687,7 @@ impl ResultPane {
             VerticalScrollParams {
                 position: scroll_offset,
                 viewport_size: visible.len(),
-                total_items: result.rows.len(),
+                total_items: result.data_row_count(),
                 has_horizontal_scrollbar: false,
             },
             theme,
@@ -753,11 +755,10 @@ impl ResultPane {
         let viewport_key = key.with_viewport(&viewport_indices, &viewport_widths);
         let measured_layout =
             measured_wrapped_cell_layout(stored_wrapped_cell, viewport_key, || {
-                result
-                    .rows
-                    .iter()
-                    .map(|row| {
-                        let viewport_row = project_viewport_row(row, &viewport_indices);
+                (0..result.data_row_count())
+                    .map(|row_idx| {
+                        let viewport_row =
+                            project_viewport_row(&display_row(result, row_idx), &viewport_indices);
                         wrapped_cell_layout::row_layout(
                             &viewport_row,
                             &viewport_widths,
@@ -824,7 +825,7 @@ impl ResultPane {
                     theme,
                 );
 
-                let row_data = &result.rows[abs_row_idx];
+                let row_data = display_row(result, abs_row_idx);
                 let cells: Vec<Cell> = viewport_indices
                     .iter()
                     .zip(viewport_widths.iter())
@@ -893,7 +894,7 @@ impl ResultPane {
             .style(Style::default().fg(theme.semantic.text.primary));
         frame.render_widget(table, inner);
 
-        let total_rows = result.rows.len();
+        let total_rows = result.data_row_count();
         let total_cols = result.columns.len();
 
         use crate::primitives::atoms::scroll_indicator::{
@@ -959,6 +960,187 @@ fn editing_cell_content(
     }
 }
 
+fn calculate_result_ideal_widths(result: &QueryResult) -> Vec<u16> {
+    calculate_ideal_widths_with(
+        &result.columns,
+        result.data_row_count(),
+        |row_idx, col_idx| display_width_at(result, row_idx, col_idx),
+    )
+}
+
+const BLOB_PREVIEW_BYTES: usize = 8;
+
+fn format_row_count(row_count: usize) -> String {
+    if row_count == 1 {
+        "1 row".to_string()
+    } else {
+        format!("{row_count} rows")
+    }
+}
+
+fn display_value_at_width(
+    result: &QueryResult,
+    row: usize,
+    col: usize,
+    max_width: usize,
+) -> Option<String> {
+    if result.has_typed_values() {
+        result
+            .value_at(row, col)
+            .map(|value| query_value_display_at_width(value, max_width))
+    } else {
+        result
+            .display_value_ref_at(row, col)
+            .map(|value| truncate_display_text(value.as_ref(), false, max_width))
+    }
+}
+
+fn query_value_display_at_width(value: &QueryValue, max_width: usize) -> String {
+    match value {
+        QueryValue::Null => truncate_display_text("NULL", false, max_width),
+        QueryValue::Text(value) | QueryValue::SqlLiteral(value) => {
+            truncate_display_text(value, true, max_width)
+        }
+        QueryValue::Blob(_) => blob_display_value_at_width(value, max_width),
+    }
+}
+
+fn display_width_at(result: &QueryResult, row: usize, col: usize) -> Option<usize> {
+    if result.has_typed_values() {
+        result.value_at(row, col).map(query_value_display_width)
+    } else {
+        result
+            .display_value_ref_at(row, col)
+            .map(|value| display_width_of_first_line(value.as_ref(), false))
+    }
+}
+
+fn query_value_display_width(value: &QueryValue) -> usize {
+    match value {
+        QueryValue::Null => UnicodeWidthStr::width("NULL"),
+        QueryValue::Text(value) | QueryValue::SqlLiteral(value) => {
+            display_width_of_first_line(value, true)
+        }
+        QueryValue::Blob(bytes) => blob_display_width(bytes),
+    }
+}
+
+fn display_width_of_first_line(value: &str, escape_nul: bool) -> usize {
+    let first_line = value.split('\n').next().unwrap_or(value);
+    if escape_nul {
+        first_line
+            .split('\0')
+            .map(UnicodeWidthStr::width)
+            .sum::<usize>()
+            + first_line.matches('\0').count() * 2
+    } else {
+        UnicodeWidthStr::width(first_line)
+    }
+}
+
+fn display_grapheme_info(value: &str, escape_nul: bool) -> (&str, usize) {
+    if escape_nul && value == "\0" {
+        ("\\0", 2)
+    } else {
+        (value, UnicodeWidthStr::width(value))
+    }
+}
+
+fn truncate_display_text(value: &str, escape_nul: bool, max_width: usize) -> String {
+    let first_line = value.split('\n').next().unwrap_or(value);
+    let budget = max_width.saturating_sub(3);
+    let mut display = String::new();
+    let mut display_width = 0usize;
+
+    for (offset, grapheme) in first_line.grapheme_indices(true) {
+        let (display_grapheme, width) = display_grapheme_info(grapheme, escape_nul);
+        if display_width.saturating_add(width) > max_width {
+            if max_width < 3 {
+                return ".".repeat(max_width);
+            }
+            display.clear();
+            let mut truncated_width = 0usize;
+            for grapheme in first_line[..offset].graphemes(true) {
+                let (display_grapheme, width) = display_grapheme_info(grapheme, escape_nul);
+                if truncated_width.saturating_add(width) <= budget {
+                    display.push_str(display_grapheme);
+                    truncated_width += width;
+                }
+            }
+            display.push_str("...");
+            return display;
+        }
+
+        display.push_str(display_grapheme);
+        display_width += width;
+    }
+
+    display
+}
+
+fn blob_display_value_at_width(value: &QueryValue, max_width: usize) -> String {
+    let mut display = value.display_value();
+    if UnicodeWidthStr::width(display.as_str()) <= max_width {
+        return display;
+    }
+    if max_width < 3 {
+        return ".".repeat(max_width);
+    }
+
+    display.truncate(max_width - 3);
+    display.push_str("...");
+    display
+}
+
+fn blob_display_width(bytes: &[u8]) -> usize {
+    let mut width = UnicodeWidthStr::width("BLOB (")
+        + decimal_display_width(bytes.len())
+        + UnicodeWidthStr::width(" bytes)");
+    let preview_bytes = bytes.len().min(BLOB_PREVIEW_BYTES);
+    if preview_bytes > 0 {
+        width += 1 + preview_bytes * 2 + preview_bytes.saturating_sub(1);
+        if bytes.len() > BLOB_PREVIEW_BYTES {
+            width += UnicodeWidthStr::width(" ...");
+        }
+    }
+    width
+}
+
+fn decimal_display_width(mut value: usize) -> usize {
+    let mut width = 1;
+    while value >= 10 {
+        value /= 10;
+        width += 1;
+    }
+    width
+}
+
+fn calculate_ideal_widths_with(
+    headers: &[String],
+    row_count: usize,
+    mut cell_width: impl FnMut(usize, usize) -> Option<usize>,
+) -> Vec<u16> {
+    const SAMPLE_ROWS: usize = 50;
+
+    headers
+        .iter()
+        .enumerate()
+        .map(|(col_idx, header)| {
+            let mut max_width = UnicodeWidthStr::width(header.as_str());
+
+            let sample_size = row_count.min(SAMPLE_ROWS);
+            for row_idx in 0..sample_size {
+                if let Some(width) = cell_width(row_idx, col_idx) {
+                    max_width = max_width.max(width);
+                }
+            }
+
+            let max_width = max_width.min(MAX_COL_WIDTH as usize) as u16;
+            (max_width + PADDING).clamp(MIN_COL_WIDTH, MAX_COL_WIDTH)
+        })
+        .collect()
+}
+
 // TODO: cursor windowing is char-based; editing a CJK cell can render wider
 // than the column until text_cursor_spans becomes display-width aware
 fn cell_edit_line_with_cursor(
@@ -992,55 +1174,25 @@ fn truncate_cell(s: &str, max_width: usize) -> String {
     truncate_to_width(first_line, max_width)
 }
 
-pub(crate) fn calculate_ideal_widths(headers: &[String], rows: &[Vec<String>]) -> Vec<u16> {
-    calculate_ideal_widths_inner(headers, rows, false)
+fn display_row(result: &QueryResult, row: usize) -> Vec<String> {
+    result.display_row_at(row).unwrap_or_default()
 }
 
-/// Like `calculate_ideal_widths`, but sizes each column by the widest *line*
-/// across the whole cell rather than just the first line. Wrapped Cell Mode
-/// wraps and displays every line, so its width budgeting needs to reflect the
-/// full multi-line content (e.g. `jsonb_pretty()` output, which often starts
-/// with a lone `{` far shorter than the lines that follow).
-pub(crate) fn calculate_wrapped_cell_ideal_widths(
-    headers: &[String],
-    rows: &[Vec<String>],
-) -> Vec<u16> {
-    calculate_ideal_widths_inner(headers, rows, true)
-}
-
-fn calculate_ideal_widths_inner(
-    headers: &[String],
-    rows: &[Vec<String>],
-    consider_all_lines: bool,
-) -> Vec<u16> {
-    use unicode_width::UnicodeWidthStr;
-
-    const SAMPLE_ROWS: usize = 50;
-
-    headers
-        .iter()
-        .enumerate()
-        .map(|(col_idx, header)| {
-            let mut max_width = UnicodeWidthStr::width(header.as_str());
-
-            let sample_size = rows.len().min(SAMPLE_ROWS);
-            for row in rows.iter().take(sample_size) {
-                if let Some(cell) = row.get(col_idx) {
-                    if consider_all_lines {
-                        for line in cell.lines() {
-                            max_width = max_width.max(UnicodeWidthStr::width(line));
-                        }
-                    } else {
-                        let first_line = cell.lines().next().unwrap_or(cell);
-                        max_width = max_width.max(UnicodeWidthStr::width(first_line));
-                    }
-                }
-            }
-
-            let max_width = max_width.min(MAX_COL_WIDTH as usize) as u16;
-            (max_width + PADDING).clamp(MIN_COL_WIDTH, MAX_COL_WIDTH)
-        })
-        .collect()
+/// Like `calculate_result_ideal_widths`, but sizes each column by the widest
+/// *line* across the whole cell rather than just the first line. Wrapped Cell
+/// Mode wraps and displays every line, so its width budgeting needs to reflect
+/// the full multi-line content (e.g. `jsonb_pretty()` output, which often
+/// starts with a lone `{` far shorter than the lines that follow).
+fn calculate_wrapped_cell_ideal_widths(result: &QueryResult) -> Vec<u16> {
+    calculate_ideal_widths_with(
+        &result.columns,
+        result.data_row_count(),
+        |row_idx, col_idx| {
+            result
+                .display_value_ref_at(row_idx, col_idx)
+                .map(|cell| cell.lines().map(UnicodeWidthStr::width).max().unwrap_or(0))
+        },
+    )
 }
 
 /// The runtime-effective Wrapped Cell settings for the result pane: the
@@ -1069,11 +1221,10 @@ fn measured_wrapped_cell_layout(
 
 fn cached_wrapped_cell_ideal_widths<'a>(
     cache: &'a mut ColumnWidthsCache,
-    headers: &[String],
-    rows: &[Vec<String>],
+    result: &QueryResult,
 ) -> &'a [u16] {
     if cache.wrapped_ideal_widths.is_none() {
-        cache.wrapped_ideal_widths = Some(calculate_wrapped_cell_ideal_widths(headers, rows));
+        cache.wrapped_ideal_widths = Some(calculate_wrapped_cell_ideal_widths(result));
     }
     cache
         .wrapped_ideal_widths
@@ -1144,7 +1295,7 @@ fn wrapped_cell_lines(
     skip: usize,
 ) -> Vec<Line<'static>> {
     let wrap_width = WrappedCellSettings::effective_wrap_width(col_width, PADDING);
-    let mut lines = crate::primitives::utils::text_utils::wrap_text_lines(text, wrap_width);
+    let mut lines = wrap_text_lines(text, wrap_width);
 
     if skip > 0 {
         lines.drain(..skip.min(lines.len()));
@@ -1180,11 +1331,11 @@ fn append_ellipsis(line: &mut String, width: u16) {
         return;
     }
     if ellipsis_width > max {
-        *line = crate::primitives::utils::text_utils::take_within_width(ellipsis, max);
+        *line = take_within_width(ellipsis, max);
         return;
     }
     let budget = max.saturating_sub(ellipsis_width);
-    let trimmed = crate::primitives::utils::text_utils::take_within_width(line, budget);
+    let trimmed = take_within_width(line, budget);
     *line = trimmed;
     line.push_str(ellipsis);
 }
@@ -1195,6 +1346,81 @@ mod tests {
     use rstest::rstest;
 
     use crate::theme::DEFAULT_THEME;
+
+    fn calculate_ideal_widths(headers: &[String], rows: &[Vec<String>]) -> Vec<u16> {
+        calculate_ideal_widths_with(headers, rows.len(), |row_idx, col_idx| {
+            rows.get(row_idx)
+                .and_then(|row| row.get(col_idx))
+                .map(|cell| UnicodeWidthStr::width(cell.lines().next().unwrap_or(cell)))
+        })
+    }
+
+    mod row_count_display {
+        use super::*;
+
+        #[rstest]
+        #[case(0, "0 rows")]
+        #[case(1, "1 row")]
+        #[case(5, "5 rows")]
+        fn formats_row_count(#[case] count: usize, #[case] expected: &str) {
+            assert_eq!(format_row_count(count), expected);
+        }
+    }
+
+    mod display_values {
+        use super::*;
+
+        #[test]
+        fn width_limited_display_avoids_materializing_the_full_nul_text() {
+            let value = QueryValue::text("a\0bcdef");
+
+            assert_eq!(query_value_display_at_width(&value, 6), "a\\0...");
+        }
+
+        #[rstest]
+        #[case("日abc", false, 4, "a...")]
+        #[case("👨‍👩‍👧‍👦abc", false, 4, "a...")]
+        #[case("日本a語", false, 6, "日a...")]
+        #[case("ab\u{200b}cde", false, 4, "a\u{200b}...")]
+        #[case("日\0abc", true, 6, "日a...")]
+        #[case("لاabc", false, 4, "ل...")]
+        fn truncation_preserves_mixed_width_selection(
+            #[case] value: &str,
+            #[case] escape_nul: bool,
+            #[case] max_width: usize,
+            #[case] expected: &str,
+        ) {
+            assert_eq!(
+                truncate_display_text(value, escape_nul, max_width),
+                expected
+            );
+        }
+
+        #[test]
+        fn display_width_handles_large_nul_text_and_blob_without_display_materialization() {
+            const SIZE: usize = 1024 * 1024;
+            let text = format!("{}\0tail", "a".repeat(SIZE));
+            let blob = vec![0xAB; SIZE];
+            let result = QueryResult::success_with_values(
+                "SELECT body, payload".to_string(),
+                vec!["body".to_string(), "payload".to_string()],
+                vec![vec![QueryValue::text(text), QueryValue::Blob(blob)]],
+                0,
+                QuerySource::Adhoc,
+            );
+
+            assert_eq!(display_width_at(&result, 0, 0), Some(SIZE + 6));
+            assert_eq!(
+                display_width_at(&result, 0, 1),
+                Some("BLOB (1048576 bytes) AB AB AB AB AB AB AB AB ...".len())
+            );
+        }
+
+        #[test]
+        fn display_width_counts_zwj_emoji_as_one_sequence() {
+            assert_eq!(query_value_display_width(&QueryValue::text("👨‍👩‍👧‍👦")), 2);
+        }
+    }
 
     mod calculate_ideal_widths_tests {
         use super::*;
@@ -1294,20 +1520,47 @@ mod tests {
             assert_eq!(result[1], 15);
             assert_eq!(result[2], 19);
         }
+
+        #[test]
+        fn typed_values_supply_display_widths_without_display_rows() {
+            let result = QueryResult::success_with_values(
+                "SELECT body".to_string(),
+                vec!["body".to_string()],
+                vec![vec![QueryValue::text("hello")]],
+                0,
+                QuerySource::Preview,
+            );
+
+            assert_eq!(calculate_result_ideal_widths(&result), vec![7]);
+            assert_eq!(result.display_value_ref_at(0, 0).as_deref(), Some("hello"));
+            assert_eq!(result.display_row_at(0), Some(vec!["hello".to_string()]));
+        }
     }
 
     mod calculate_wrapped_cell_ideal_widths_tests {
         use super::*;
 
+        fn text_result(headers: &[&str], rows: &[&[&str]]) -> QueryResult {
+            QueryResult::success(
+                "SELECT".to_string(),
+                headers.iter().map(ToString::to_string).collect(),
+                rows.iter()
+                    .map(|row| row.iter().map(ToString::to_string).collect())
+                    .collect(),
+                0,
+                QuerySource::Adhoc,
+            )
+        }
+
         #[test]
         fn considers_widest_line_not_just_first() {
-            let headers = vec!["data".to_string()];
-            let rows = vec![vec![
-                "{\n    \"name\": \"a very long value here\"\n}".to_string(),
-            ]];
+            let result = text_result(
+                &["data"],
+                &[&["{\n    \"name\": \"a very long value here\"\n}"]],
+            );
 
-            let ideal = calculate_ideal_widths(&headers, &rows);
-            let wrapped_cell = calculate_wrapped_cell_ideal_widths(&headers, &rows);
+            let ideal = calculate_result_ideal_widths(&result);
+            let wrapped_cell = calculate_wrapped_cell_ideal_widths(&result);
 
             assert!(wrapped_cell[0] > ideal[0]);
             assert_eq!(wrapped_cell[0], 38);
@@ -1315,13 +1568,12 @@ mod tests {
 
         #[test]
         fn cached_widths_are_reused_for_the_same_result() {
-            let headers = vec!["value".to_string()];
-            let rows = vec![vec!["short".to_string()]];
-            let changed_rows = vec![vec!["a much longer value".to_string()]];
+            let result = text_result(&["value"], &[&["short"]]);
+            let changed = text_result(&["value"], &[&["a much longer value"]]);
             let mut cache = ColumnWidthsCache::new(vec![7], vec![7], 1);
 
-            let first = cached_wrapped_cell_ideal_widths(&mut cache, &headers, &rows).to_vec();
-            let reused = cached_wrapped_cell_ideal_widths(&mut cache, &headers, &changed_rows);
+            let first = cached_wrapped_cell_ideal_widths(&mut cache, &result).to_vec();
+            let reused = cached_wrapped_cell_ideal_widths(&mut cache, &changed);
 
             assert_eq!(reused, first.as_slice());
         }

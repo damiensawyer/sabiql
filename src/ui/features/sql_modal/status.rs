@@ -2,14 +2,37 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::app::model::app_state::AppState;
-use crate::app::model::sql_editor::modal::{HIGH_RISK_INPUT_VISIBLE_WIDTH, SqlModalStatus};
+use crate::app::model::shared::text_input::TextInputState;
+use crate::app::model::sql_editor::modal::{
+    AdhocSuccessSnapshot, HIGH_RISK_INPUT_VISIBLE_WIDTH, SqlModalStatus,
+};
 use crate::app::policy::write::sql_risk::AcknowledgeReason;
+use crate::app::policy::write::write_guardrails::AdhocRiskDecision;
+use crate::domain::{CommandTag, DatabaseDiagnostic, DiagnosticLevel};
 use crate::primitives::atoms::{spinner_char, text_cursor_spans};
-use crate::primitives::utils::text_utils::truncate_to_width_with;
+use crate::primitives::utils::text_utils::{truncate_to_width_with, wrapped_line_count};
 use crate::theme::ThemePalette;
+
+pub(super) fn status_height(state: &AppState, width: u16) -> u16 {
+    let SqlModalStatus::Success(snapshot) = state.sql_modal.status() else {
+        return 1;
+    };
+    if snapshot.mysql_diagnostics.is_empty() {
+        return 1;
+    }
+
+    let status_width = width.saturating_sub(" [NORMAL]".len() as u16 + 1);
+    let base_lines = wrapped_line_count(&success_status_message(snapshot), status_width);
+    let diagnostic_lines = snapshot
+        .mysql_diagnostics
+        .iter()
+        .map(|diagnostic| wrapped_line_count(&diagnostic_status_line(diagnostic), status_width))
+        .sum::<u16>();
+    base_lines.saturating_add(diagnostic_lines).max(1)
+}
 
 pub(super) fn render_status(frame: &mut Frame, area: Rect, state: &AppState, theme: &ThemePalette) {
     if let SqlModalStatus::ConfirmingHigh {
@@ -27,9 +50,16 @@ pub(super) fn render_status(frame: &mut Frame, area: Rect, state: &AppState, the
         return;
     }
 
+    if let SqlModalStatus::Success(snapshot) = state.sql_modal.status()
+        && !snapshot.mysql_diagnostics.is_empty()
+    {
+        render_success_status_with_diagnostics(frame, area, snapshot, theme);
+        return;
+    }
+
     let (badge_text, badge_style, status_text, status_style) = match state.sql_modal.status() {
         SqlModalStatus::Normal => {
-            if let Some(ref msg) = state.messages.last_success {
+            if let Some(msg) = state.messages.last_success() {
                 (
                     "[NORMAL]",
                     Style::default().fg(theme.semantic.text.dim),
@@ -69,8 +99,8 @@ pub(super) fn render_status(frame: &mut Frame, area: Rect, state: &AppState, the
                 Style::default().fg(theme.semantic.text.accent),
             )
         }
-        SqlModalStatus::Success => {
-            let msg = success_status_message(state);
+        SqlModalStatus::Success(snapshot) => {
+            let msg = success_status_message(snapshot);
             (
                 "[NORMAL]",
                 Style::default().fg(theme.semantic.status.success),
@@ -80,8 +110,8 @@ pub(super) fn render_status(frame: &mut Frame, area: Rect, state: &AppState, the
                     .add_modifier(Modifier::BOLD),
             )
         }
-        SqlModalStatus::Error => {
-            let msg = error_status_message(state);
+        SqlModalStatus::Error(error) => {
+            let msg = error_status_message(error);
             (
                 "[NORMAL]",
                 Style::default().fg(theme.semantic.status.error),
@@ -135,8 +165,8 @@ pub(super) fn render_status(frame: &mut Frame, area: Rect, state: &AppState, the
 fn render_confirming_high_status(
     frame: &mut Frame,
     area: Rect,
-    decision: &crate::app::policy::write::write_guardrails::AdhocRiskDecision,
-    input: &crate::app::model::shared::text_input::TextInputState,
+    decision: &AdhocRiskDecision,
+    input: &TextInputState,
     name: &str,
     theme: &ThemePalette,
 ) {
@@ -205,6 +235,16 @@ fn render_confirming_risk_status(
             Style::default().fg(theme.semantic.status.error),
             "Can't identify target name \u{2014} review before executing",
         ),
+        AcknowledgeReason::NonAtomicTransaction => (
+            "\u{26a0} NON-ATOMIC  SQLite transaction".to_string(),
+            Style::default().fg(theme.semantic.status.warning),
+            "SQLite must run this script without an automatic transaction",
+        ),
+        AcknowledgeReason::AnalyzeExecution => (
+            format!("\u{26a0} LOW RISK  {label}"),
+            Style::default().fg(theme.semantic.status.warning),
+            "EXPLAIN ANALYZE will execute this read-only statement",
+        ),
     };
 
     let line1 = Line::from(Span::styled(badge_text, badge_style));
@@ -215,14 +255,11 @@ fn render_confirming_risk_status(
     frame.render_widget(Paragraph::new(vec![line1, line2]), area);
 }
 
-fn success_status_message(state: &AppState) -> String {
-    let Some(snapshot) = state.sql_modal.last_adhoc_success() else {
-        return "\u{2713} OK".to_string();
-    };
+fn success_status_message(snapshot: &AdhocSuccessSnapshot) -> String {
     let time_secs = snapshot.execution_time_ms as f64 / 1000.0;
 
     if let Some(tag) = snapshot.command_tag.as_ref() {
-        format!("\u{2713} {} ({:.2}s)", tag.display_message(), time_secs)
+        format!("\u{2713} {} ({:.2}s)", command_tag_message(tag), time_secs)
     } else {
         let rows_label = if snapshot.row_count == 1 {
             "row"
@@ -236,13 +273,191 @@ fn success_status_message(state: &AppState) -> String {
     }
 }
 
-fn error_status_message(state: &AppState) -> String {
-    state
-        .sql_modal
-        .last_adhoc_error()
-        .and_then(|e| e.lines().next())
-        .map_or_else(
-            || "\u{2717} Error".to_string(),
-            |line| format!("\u{2717} {line}"),
-        )
+fn command_tag_message(tag: &CommandTag) -> String {
+    match tag {
+        CommandTag::Select(n) => row_count_label(*n, "selected"),
+        CommandTag::Insert(n) => row_count_label(*n, "inserted"),
+        CommandTag::Affected(n) => row_count_label(*n, "affected"),
+        CommandTag::Update(n) => row_count_label(*n, "updated"),
+        CommandTag::Delete(n) => row_count_label(*n, "deleted"),
+        CommandTag::Create(obj) => format!("{} created", obj.to_lowercase()),
+        CommandTag::Drop(obj) => format!("{} dropped", obj.to_lowercase()),
+        CommandTag::Alter(obj) => format!("{} altered", obj.to_lowercase()),
+        CommandTag::Truncate => "table truncated".to_string(),
+        CommandTag::Begin => "transaction started".to_string(),
+        CommandTag::Commit => "committed".to_string(),
+        CommandTag::Rollback => "rolled back".to_string(),
+        CommandTag::Other(tag) => tag.to_lowercase(),
+    }
+}
+
+fn row_count_label(n: u64, verb: &str) -> String {
+    if n == 1 {
+        format!("1 row {verb}")
+    } else {
+        format!("{n} rows {verb}")
+    }
+}
+
+fn render_success_status_with_diagnostics(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &AdhocSuccessSnapshot,
+    theme: &ThemePalette,
+) {
+    let badge_display = " [NORMAL]";
+    let badge_width = badge_display.len() as u16 + 1;
+    let [badge_area, status_area] =
+        Layout::horizontal([Constraint::Length(badge_width), Constraint::Min(1)]).areas(area);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            badge_display,
+            Style::default().fg(theme.semantic.status.success),
+        ))),
+        badge_area,
+    );
+
+    let mut lines = vec![Line::from(Span::styled(
+        format!("{} ", success_status_message(snapshot)),
+        Style::default()
+            .fg(theme.semantic.status.success)
+            .add_modifier(Modifier::BOLD),
+    ))];
+    lines.extend(snapshot.mysql_diagnostics.iter().map(|diagnostic| {
+        Line::from(Span::styled(
+            diagnostic_status_line(diagnostic),
+            Style::default().fg(theme.semantic.status.warning),
+        ))
+    }));
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        status_area,
+    );
+}
+
+fn diagnostic_status_line(diagnostic: &DatabaseDiagnostic) -> String {
+    let level = match diagnostic.level {
+        DiagnosticLevel::Warning => "Warning",
+        DiagnosticLevel::Note => "Note",
+    };
+    format!(
+        "⚠ {level} (Code {}): {}",
+        diagnostic.code, diagnostic.message
+    )
+}
+
+fn error_status_message(error: &str) -> String {
+    error.lines().next().map_or_else(
+        || "\u{2717} Error".to_string(),
+        |line| format!("\u{2717} {line}"),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_tag_message_singular_row() {
+        assert_eq!(
+            command_tag_message(&CommandTag::Insert(1)),
+            "1 row inserted"
+        );
+        assert_eq!(
+            command_tag_message(&CommandTag::Affected(1)),
+            "1 row affected"
+        );
+        assert_eq!(command_tag_message(&CommandTag::Delete(1)), "1 row deleted");
+    }
+
+    #[test]
+    fn command_tag_message_plural_rows() {
+        assert_eq!(
+            command_tag_message(&CommandTag::Select(5)),
+            "5 rows selected"
+        );
+        assert_eq!(
+            command_tag_message(&CommandTag::Update(10)),
+            "10 rows updated"
+        );
+    }
+
+    #[test]
+    fn command_tag_message_zero_rows() {
+        assert_eq!(
+            command_tag_message(&CommandTag::Delete(0)),
+            "0 rows deleted"
+        );
+        assert_eq!(
+            command_tag_message(&CommandTag::Affected(0)),
+            "0 rows affected"
+        );
+    }
+
+    #[test]
+    fn command_tag_message_ddl() {
+        assert_eq!(
+            command_tag_message(&CommandTag::Create("TABLE".to_string())),
+            "table created"
+        );
+        assert_eq!(
+            command_tag_message(&CommandTag::Drop("INDEX".to_string())),
+            "index dropped"
+        );
+        assert_eq!(
+            command_tag_message(&CommandTag::Alter("TABLE".to_string())),
+            "table altered"
+        );
+    }
+
+    #[test]
+    fn command_tag_message_tcl() {
+        assert_eq!(
+            command_tag_message(&CommandTag::Truncate),
+            "table truncated"
+        );
+        assert_eq!(
+            command_tag_message(&CommandTag::Begin),
+            "transaction started"
+        );
+        assert_eq!(command_tag_message(&CommandTag::Commit), "committed");
+        assert_eq!(command_tag_message(&CommandTag::Rollback), "rolled back");
+    }
+
+    #[test]
+    fn command_tag_message_other() {
+        assert_eq!(
+            command_tag_message(&CommandTag::Other("VACUUM".to_string())),
+            "vacuum"
+        );
+    }
+
+    #[test]
+    fn diagnostics_height_only_applies_to_success_status() {
+        let mut state = AppState::new("test_project".to_string());
+        state.sql_modal.finish_adhoc_success(AdhocSuccessSnapshot {
+            command_tag: None,
+            row_count: 1,
+            execution_time_ms: 15,
+            mysql_diagnostics: vec![DatabaseDiagnostic {
+                level: DiagnosticLevel::Warning,
+                code: 1265,
+                message: "truncated".to_string(),
+            }],
+        });
+
+        assert!(status_height(&state, 80) > 1);
+        state.sql_modal.enter_normal();
+        assert_eq!(status_height(&state, 80), 1);
+
+        state.sql_modal.enter_editing();
+        assert_eq!(status_height(&state, 80), 1);
+
+        state.sql_modal.begin_adhoc_running();
+        assert_eq!(status_height(&state, 80), 1);
+
+        state.sql_modal.finish_adhoc_error("error".to_string());
+        assert_eq!(status_height(&state, 80), 1);
+    }
 }
